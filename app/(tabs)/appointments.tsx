@@ -51,7 +51,10 @@ export default function AppointmentsScreen() {
     try {
       setIsLoading(true);
       const res = await api.get('/appointments');
-      const items = res.data?.data?.items || res.data?.data || [];
+      const items =
+        res.data?.data?.data ||
+        res.data?.data?.items ||
+        (Array.isArray(res.data?.data) ? res.data?.data : []);
       setAppointments(items);
     } catch {
       // Mock data hiển thị khi chưa có kết nối server

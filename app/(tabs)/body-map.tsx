@@ -65,17 +65,28 @@ export default function BodyMapScreen() {
 
   useEffect(() => {
     fetchBodyParts();
-  }, []);
+    fetchSymptoms();
+  }, [token]);
 
   const fetchBodyParts = async () => {
     try {
-      const res = await api.get('/body-map/body-parts');
+      const res = await api.get('/body-parts');
       if (res.data?.data && res.data.data.length > 0) {
         setBodyParts(res.data.data);
       }
     } catch {
       // Fallback về DEFAULT_BODY_PARTS đã nạp
     }
+  };
+
+  const fetchSymptoms = async () => {
+    if (!token) return;
+    try {
+      const res = await api.get('/symptoms');
+      if (res.data?.data && res.data.data.length > 0) {
+        // Cập nhật danh sách triệu chứng từ catalog backend
+      }
+    } catch {}
   };
 
   const handlePressPart = (part: BodyPartData) => {
@@ -134,26 +145,26 @@ export default function BodyMapScreen() {
 
     try {
       setIsLoading(true);
-      // Bước 1: Tạo phiên khai báo
-      const reportRes = await api.post('/body-map/symptom-reports', {
-        title: 'Tự khai báo triệu chứng tại nhà',
-        notes: `Khai báo ${selectedItems.length} vị trí đau trên cơ thể`,
+      // Bước 1: Tạo phiên khai báo chuẩn schema BE
+      const reportRes = await api.post('/symptom-reports', {
+        patientId: user?.id,
+        source: 'app',
       });
       const repId = reportRes.data?.data?.id;
       setReportId(repId);
 
       // Bước 2: Lưu từng triệu chứng vào report
       for (const item of selectedItems) {
-        await api.post(`/body-map/symptom-reports/${repId}/items`, {
+        await api.post(`/symptom-reports/${repId}/items`, {
           bodyPartId: item.bodyPartId,
           symptomId: item.symptomId,
           severity: item.severity,
-          description: item.note || undefined,
+          note: item.note || undefined,
         });
       }
 
       // Bước 3: Lấy chi tiết phiên & gợi ý sản phẩm
-      const detailRes = await api.get(`/body-map/symptom-reports/${repId}`);
+      const detailRes = await api.get(`/symptom-reports/${repId}`);
       const recommendations = detailRes.data?.data?.recommendations || [];
       setRecommendedProducts(recommendations);
 
@@ -193,7 +204,7 @@ export default function BodyMapScreen() {
       tomorrow.setDate(tomorrow.getDate() + 1);
       tomorrow.setHours(9, 0, 0, 0);
 
-      await api.post(`/body-map/symptom-reports/${reportId}/convert-to-appointment`, {
+      await api.post(`/symptom-reports/${reportId}/convert-to-appointment`, {
         scheduledAt: tomorrow.toISOString(),
         visitAddress: address,
         note: `Đặt lịch từ Body Map (${selectedItems.map((i) => i.bodyPartName).join(', ')})`,

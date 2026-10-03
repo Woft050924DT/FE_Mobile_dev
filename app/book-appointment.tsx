@@ -47,6 +47,7 @@ export default function BookAppointmentScreen() {
       scheduledAt.setHours(9, 0, 0, 0);
 
       await api.post('/appointments', {
+        patientId: user?.id,
         type: appointmentType,
         scheduledAt: scheduledAt.toISOString(),
         visitAddress: visitAddress.trim(),

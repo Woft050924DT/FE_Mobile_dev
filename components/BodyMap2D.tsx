@@ -192,8 +192,10 @@ export const BodyMap2D: React.FC<Props> = ({
 
           {/* Vòng lặp hiển thị các Hotspot tương tác */}
           {currentParts.map((part) => {
-            const cx = (part.coord_x / 100) * WIDTH;
-            const cy = (part.coord_y / 100) * HEIGHT;
+            const coordX = Number(part.coord_x);
+            const coordY = Number(part.coord_y);
+            const cx = (coordX / 100) * WIDTH;
+            const cy = (coordY / 100) * HEIGHT;
             const selected = getSelectedItem(part.id);
             const color = getHotspotColor(selected);
 

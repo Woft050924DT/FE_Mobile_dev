@@ -1,11 +1,32 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 
-// Lựa chọn Host phù hợp: Web/iOS dùng localhost, Android Emulator dùng 10.0.2.2
-const DEFAULT_HOST = Platform.OS === 'android' ? 'http://10.0.2.2:3000/api' : 'http://localhost:3000/api';
+/**
+ * Tự động phân giải IP Backend phù hợp cho mọi môi trường:
+ * - Web: http://localhost:3000/api
+ * - Expo Go (Điện thoại thật qua Wi-Fi): tự động lấy IP máy tính đang chạy Expo (VD: 192.168.110.229)
+ * - Máy ảo Android (Emulator): kết nối qua LAN IP hoặc 10.0.2.2
+ */
+export const getBaseUrl = (): string => {
+  if (Platform.OS === 'web') {
+    return 'http://localhost:3000/api';
+  }
 
-export const API_BASE_URL = DEFAULT_HOST;
+  // Lấy IP từ Expo Dev Server Host URI (tự động đúng với mọi mạng Wi-Fi)
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const ip = hostUri.split(':')[0];
+    return `http://${ip}:3000/api`;
+  }
+
+  // IP mạng LAN hiện tại của máy tính
+  const CURRENT_LAN_IP = '192.168.110.229';
+  return `http://${CURRENT_LAN_IP}:3000/api`;
+};
+
+export const API_BASE_URL = getBaseUrl();
 
 // Helper lưu trữ an toàn token đa nền tảng
 export const storage = {
@@ -52,10 +73,10 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 12000,
+  timeout: 15000,
 });
 
-// Gắn Bearer Token tự động
+// Gắn Bearer Token tự động từ Storage
 api.interceptors.request.use(async (config) => {
   const token = await storage.getItem('access_token');
   if (token && config.headers) {
@@ -64,7 +85,7 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Xử lý 401 & Auto refresh
+// Xử lý khi Token hết hạn (401) -> Tự động gọi Refresh Token
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
@@ -90,6 +111,7 @@ api.interceptors.response.use(
       } catch {
         await storage.removeItem('access_token');
         await storage.removeItem('refresh_token');
+        await storage.removeItem('user_profile');
       }
     }
     return Promise.reject(err);

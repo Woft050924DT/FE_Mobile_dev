@@ -42,16 +42,31 @@ export default function CareScreen() {
       const notifRes = await api.get('/notifications');
       setNotifications(notifRes.data?.data?.items || notifRes.data?.data || []);
 
-      // Lấy thông tin CSKH phụ trách
+      // Lấy thông tin CSKH phụ trách qua hồ sơ bệnh nhân
       if (user?.id) {
         try {
-          const cskhRes = await api.get(`/cskh/assignments/patient/${user.id}`);
-          setCskhStaff(cskhRes.data?.data);
+          const patientRes = await api.get(`/patients/${user.id}`);
+          const assignedStaff = patientRes.data?.data?.users_patients_assigned_cskh_idTousers;
+          if (assignedStaff) {
+            setCskhStaff({
+              cskh_staff: assignedStaff,
+              assigned_at: patientRes.data?.data?.created_at,
+            });
+          } else {
+            setCskhStaff({
+              cskh_staff: {
+                full_name: 'CSKH Trần Thị B (Mặc định)',
+                phone: '0903456789',
+                email: 'cskh@hospital.local',
+              },
+              assigned_at: new Date().toISOString(),
+            });
+          }
         } catch {
-          // Mock data CSKH mẫu
+          // Fallback khi chưa gán CSKH
           setCskhStaff({
             cskh_staff: {
-              full_name: 'Trần Thị B',
+              full_name: 'CSKH Trần Thị B',
               phone: '0903456789',
               email: 'cskh@hospital.local',
             },

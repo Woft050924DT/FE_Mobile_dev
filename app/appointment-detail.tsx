@@ -33,9 +33,7 @@ export default function AppointmentDetailScreen() {
 
       // Nếu có examinations liên kết
       if (apt?.examinations && apt.examinations.length > 0) {
-        const examId = apt.examinations[0].id;
-        const examRes = await api.get(`/examinations/${examId}`);
-        setExamination(examRes.data?.data);
+        setExamination(apt.examinations[0]);
       } else {
         // Mock examination data mẫu cho EMR
         setExamination({
