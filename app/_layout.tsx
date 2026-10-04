@@ -67,6 +67,48 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="doctor-examination"
+          options={{
+            title: 'Khám bệnh & Kê đơn tại nhà',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="cskh-appointments"
+          options={{
+            title: 'Bàn điều phối lịch khám',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="cskh-followups"
+          options={{
+            title: 'Quản lý tái khám (CRM)',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="doctor-workspace"
+          options={{
+            title: 'Ca trực Bác sĩ tại nhà',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="doctor-dashboard"
+          options={{
+            title: 'Dashboard Bác sĩ',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
+          name="patient-emr-history"
+          options={{
+            title: 'Hồ sơ bệnh án EMR tổng hợp',
+            headerShown: true,
+          }}
+        />
+        <Stack.Screen
           name="modal"
           options={{
             presentation: 'modal',

@@ -57,9 +57,7 @@ export const BodyMap2D: React.FC<Props> = ({
 
   const getHotspotColor = (item?: SelectedSymptomItem) => {
     if (!item) return MedicalColors.primary;
-    if (item.severity === 'severe') return MedicalColors.danger;
-    if (item.severity === 'moderate') return MedicalColors.warning;
-    return MedicalColors.success;
+    return '#EF4444'; // Đỏ nổi bật khi đã chọn điểm đau
   };
 
   return (
@@ -235,23 +233,15 @@ export const BodyMap2D: React.FC<Props> = ({
         </Svg>
       </View>
 
-      {/* Chú giải màu sắc mức độ đau */}
+      {/* Chú giải trạng thái */}
       <View style={styles.legendRow}>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, { backgroundColor: MedicalColors.primary }]} />
-          <Text style={styles.legendText}>Chưa chọn</Text>
+          <Text style={styles.legendText}>Vị trí cơ thể</Text>
         </View>
         <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: MedicalColors.success }]} />
-          <Text style={styles.legendText}>Nhẹ</Text>
-        </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: MedicalColors.warning }]} />
-          <Text style={styles.legendText}>Vừa</Text>
-        </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, { backgroundColor: MedicalColors.danger }]} />
-          <Text style={styles.legendText}>Nghiêm trọng</Text>
+          <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
+          <Text style={styles.legendText}>Đã đánh dấu đau</Text>
         </View>
       </View>
     </View>

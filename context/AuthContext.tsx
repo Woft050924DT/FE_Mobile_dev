@@ -15,10 +15,14 @@ interface AuthContextType {
   role: string | null;
   token: string | null;
   isLoading: boolean;
+  isDoctor: boolean;
+  isCskh: boolean;
+  isPatient: boolean;
   sendOtp: (phone: string) => Promise<{ expiresInSeconds: number; mockOtp?: string }>;
   verifyOtp: (phone: string, otp: string) => Promise<void>;
   loginStaff: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  switchRole: (newRole: 'patient' | 'doctor' | 'cskh') => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -97,6 +101,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole(profile.role);
   };
 
+  const switchRole = async (newRole: 'patient' | 'doctor' | 'cskh') => {
+    try {
+      setIsLoading(true);
+      if (newRole === 'doctor') {
+        await loginStaff('doctor@hospital.local', 'Doctor@123');
+      } else if (newRole === 'cskh') {
+        await loginStaff('cskh@hospital.local', 'Cskh@123');
+      } else {
+        // Patient switch
+        const profile: UserProfile = {
+          id: 'patient-demo-01',
+          fullName: 'Nguyễn Văn Bệnh Nhân',
+          phone: '0912345678',
+          role: 'patient',
+          address: '123 Đường Giải Phóng, Hai Bà Trưng, Hà Nội',
+        };
+        await storage.setItem('user_profile', JSON.stringify(profile));
+        setUser(profile);
+        setRole('patient');
+      }
+    } catch (err) {
+      console.error('Failed to switch role:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const logout = async () => {
     try {
       await api.post('/auth/logout');
@@ -109,6 +140,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole(null);
   };
 
+  const isDoctor = role === 'doctor' || user?.role === 'doctor';
+  const isCskh = role === 'cskh' || user?.role === 'cskh';
+  const isPatient = !isDoctor && !isCskh;
+
   return (
     <AuthContext.Provider
       value={{
@@ -116,10 +151,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role,
         token,
         isLoading,
+        isDoctor,
+        isCskh,
+        isPatient,
         sendOtp,
         verifyOtp,
         loginStaff,
         logout,
+        switchRole,
       }}
     >
       {children}

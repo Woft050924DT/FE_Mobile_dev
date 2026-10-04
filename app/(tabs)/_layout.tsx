@@ -3,8 +3,11 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { MedicalColors } from '../../constants/Colors';
 import { Platform } from 'react-native';
+import { useAuth } from '../../context/AuthContext';
 
 export default function TabLayout() {
+  const { isDoctor } = useAuth();
+
   return (
     <Tabs
       screenOptions={{
@@ -59,6 +62,8 @@ export default function TabLayout() {
         name="body-map"
         options={{
           title: 'Body Map',
+          href: isDoctor ? null : '/body-map',
+          tabBarItemStyle: isDoctor ? { display: 'none' } : undefined,
           tabBarIcon: ({ color, focused }) => (
             <Ionicons
               name={focused ? 'body' : 'body-outline'}

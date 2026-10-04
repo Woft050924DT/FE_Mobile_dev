@@ -45,7 +45,13 @@ const DEFAULT_SYMPTOMS = [
 
 export default function BodyMapScreen() {
   const router = useRouter();
-  const { user, token } = useAuth();
+  const { user, token, isDoctor } = useAuth();
+
+  useEffect(() => {
+    if (isDoctor) {
+      router.replace('/(tabs)');
+    }
+  }, [isDoctor]);
 
   const [bodyParts, setBodyParts] = useState<BodyPartData[]>(DEFAULT_BODY_PARTS);
   const [activeSide, setActiveSide] = useState<'front' | 'back'>('front');
@@ -55,7 +61,7 @@ export default function BodyMapScreen() {
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
   const [chosenSymptom, setChosenSymptom] = useState(DEFAULT_SYMPTOMS[0]);
-  const [chosenSeverity, setChosenSeverity] = useState<'mild' | 'moderate' | 'severe'>('mild');
+  const [customSymptomText, setCustomSymptomText] = useState('');
   const [customNote, setCustomNote] = useState('');
 
   // Recommendation & Report state
@@ -96,11 +102,11 @@ export default function BodyMapScreen() {
     if (existing) {
       const foundSym = DEFAULT_SYMPTOMS.find((s) => s.id === existing.symptomId);
       if (foundSym) setChosenSymptom(foundSym);
-      setChosenSeverity(existing.severity);
+      setCustomSymptomText(existing.symptomName || foundSym?.name || '');
       setCustomNote(existing.note || '');
     } else {
+      setCustomSymptomText('');
       setCustomNote('');
-      setChosenSeverity('mild');
     }
     setModalVisible(true);
   };
@@ -108,12 +114,14 @@ export default function BodyMapScreen() {
   const handleConfirmItem = () => {
     if (!activePart) return;
 
+    const symptomName = customSymptomText.trim() || chosenSymptom.name;
+
     const newItem: SelectedSymptomItem = {
       bodyPartId: activePart.id,
       bodyPartName: activePart.name,
       symptomId: chosenSymptom.id,
-      symptomName: chosenSymptom.name,
-      severity: chosenSeverity,
+      symptomName: symptomName,
+      severity: 'mild',
       note: customNote,
     };
 
@@ -263,38 +271,8 @@ export default function BodyMapScreen() {
           selectedItems.map((item) => (
             <View key={item.bodyPartId} style={styles.itemCard}>
               <View style={styles.itemLeft}>
-                <View
-                  style={[
-                    styles.severityTag,
-                    {
-                      backgroundColor:
-                        item.severity === 'severe'
-                          ? MedicalColors.dangerLight
-                          : item.severity === 'moderate'
-                          ? MedicalColors.warningLight
-                          : MedicalColors.successLight,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.severityText,
-                      {
-                        color:
-                          item.severity === 'severe'
-                            ? MedicalColors.danger
-                            : item.severity === 'moderate'
-                            ? MedicalColors.warningDark
-                            : MedicalColors.success,
-                      },
-                    ]}
-                  >
-                    {item.severity === 'severe'
-                      ? 'Nặng'
-                      : item.severity === 'moderate'
-                      ? 'Vừa'
-                      : 'Nhẹ'}
-                  </Text>
+                <View style={styles.pinTag}>
+                  <Ionicons name="location" size={16} color="#0284C7" />
                 </View>
                 <View>
                   <Text style={styles.partName}>{item.bodyPartName}</Text>
@@ -382,67 +360,36 @@ export default function BodyMapScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.label}>Triệu chứng phổ biến:</Text>
+            <Text style={styles.label}>Nhập triệu chứng bạn cảm thấy:</Text>
+            <TextInput
+              style={styles.symptomInput}
+              placeholder="Nhập triệu chứng (VD: Đau nhói từng cơn, tê bì, nóng rát...)"
+              placeholderTextColor="#94A3B8"
+              value={customSymptomText}
+              onChangeText={setCustomSymptomText}
+            />
+
+            <Text style={styles.label}>Hoặc chọn nhanh từ gợi ý phổ biến:</Text>
             <View style={styles.chipGroup}>
               {DEFAULT_SYMPTOMS.map((sym) => (
                 <TouchableOpacity
                   key={sym.id}
                   style={[
                     styles.chip,
-                    chosenSymptom.id === sym.id && styles.chipActive,
+                    customSymptomText === sym.name && styles.chipActive,
                   ]}
-                  onPress={() => setChosenSymptom(sym)}
+                  onPress={() => {
+                    setChosenSymptom(sym);
+                    setCustomSymptomText(sym.name);
+                  }}
                 >
                   <Text
                     style={[
                       styles.chipText,
-                      chosenSymptom.id === sym.id && styles.chipTextActive,
+                      customSymptomText === sym.name && styles.chipTextActive,
                     ]}
                   >
                     {sym.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Mức độ nghiêm trọng:</Text>
-            <View style={styles.severityRow}>
-              {(['mild', 'moderate', 'severe'] as const).map((sev) => (
-                <TouchableOpacity
-                  key={sev}
-                  style={[
-                    styles.sevBtn,
-                    chosenSeverity === sev && styles.sevBtnActive,
-                    {
-                      borderColor:
-                        sev === 'severe'
-                          ? MedicalColors.danger
-                          : sev === 'moderate'
-                          ? MedicalColors.warning
-                          : MedicalColors.success,
-                    },
-                  ]}
-                  onPress={() => setChosenSeverity(sev)}
-                >
-                  <Text
-                    style={[
-                      styles.sevBtnText,
-                      chosenSeverity === sev && {
-                        color:
-                          sev === 'severe'
-                            ? MedicalColors.danger
-                            : sev === 'moderate'
-                            ? MedicalColors.warningDark
-                            : MedicalColors.success,
-                        fontWeight: '800',
-                      },
-                    ]}
-                  >
-                    {sev === 'severe'
-                      ? 'Nghiêm trọng'
-                      : sev === 'moderate'
-                      ? 'Vừa phải'
-                      : 'Nhẹ'}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -692,25 +639,24 @@ const styles = StyleSheet.create({
     color: '#0284C7',
     fontWeight: '700',
   },
-  severityRow: {
-    flexDirection: 'row',
-    gap: 10,
+  pinTag: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#E0F2FE',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  sevBtn: {
-    flex: 1,
-    paddingVertical: 9,
+  symptomInput: {
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     borderWidth: 1,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  sevBtnActive: {
-    backgroundColor: '#F8FAFC',
-  },
-  sevBtnText: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '600',
+    borderColor: '#CBD5E1',
+    paddingHorizontal: 12,
+    height: 46,
+    fontSize: 13,
+    color: '#0F172A',
+    marginBottom: 8,
   },
   noteInput: {
     backgroundColor: '#F8FAFC',

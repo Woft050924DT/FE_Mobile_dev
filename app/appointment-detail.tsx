@@ -174,7 +174,7 @@ export default function AppointmentDetailScreen() {
             <View key={idx} style={styles.symChip}>
               <Ionicons name="checkbox-outline" size={16} color="#059669" />
               <Text style={styles.symChipText}>
-                {s.symptom?.name || 'Triệu chứng'} ({s.severity || 'mild'})
+                {s.symptoms?.name || s.symptom?.name || 'Triệu chứng'} ({s.severity || 'mild'})
               </Text>
             </View>
           ))}
@@ -192,13 +192,13 @@ export default function AppointmentDetailScreen() {
           <View key={idx} style={styles.medicineItem}>
             <View style={styles.medHeader}>
               <Text style={styles.medName}>
-                {idx + 1}. {item.product?.name}
+                {idx + 1}. {item.products?.name || item.product?.name || 'Thuốc điều trị'}
               </Text>
               <Text style={styles.medQty}>SL: {item.quantity} viên</Text>
             </View>
             <Text style={styles.medDosage}>👉 Cách dùng: {item.dosage}</Text>
             <Text style={styles.medDuration}>
-              Thời gian dùng: {item.duration_days} ngày
+              Thời gian dùng: {item.duration_days || item.durationDays || 5} ngày
             </Text>
           </View>
         ))}
