@@ -98,6 +98,7 @@ export default function BookAppointmentScreen() {
   // Khung giờ khám
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
 
   // Hình thức khám
   const [appointmentType, setAppointmentType] = useState<'first_visit' | 'follow_up'>('first_visit');
@@ -111,6 +112,17 @@ export default function BookAppointmentScreen() {
   // Loading states
   const [isLoading, setIsLoading] = useState(false);
   const [isSlotLoading, setIsSlotLoading] = useState(false);
+
+  const isSlotInPast = (slot: Pick<TimeSlot, 'startHour' | 'startMinute'>) => {
+    const slotStart = new Date(selectedDate);
+    slotStart.setHours(slot.startHour, slot.startMinute, 0, 0);
+    return slotStart.getTime() <= Math.max(currentTime, Date.now());
+  };
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (token) {
@@ -220,11 +232,15 @@ export default function BookAppointmentScreen() {
       });
 
       setTimeSlots(computed);
-      const firstAvailable = computed.find((s) => !s.isBooked);
+      const firstAvailable = computed.find(
+        (slot) => !slot.isBooked && !isSlotInPast(slot)
+      );
       setSelectedSlotId(firstAvailable ? firstAvailable.id : null);
     } catch {
-      setTimeSlots(BASE_SLOTS.map((s) => ({ ...s, isBooked: false })));
-      setSelectedSlotId(BASE_SLOTS[0].id);
+      const fallbackSlots = BASE_SLOTS.map((slot) => ({ ...slot, isBooked: false }));
+      setTimeSlots(fallbackSlots);
+      const firstAvailable = fallbackSlots.find((slot) => !isSlotInPast(slot));
+      setSelectedSlotId(firstAvailable ? firstAvailable.id : null);
     } finally {
       setIsSlotLoading(false);
     }
@@ -307,7 +323,11 @@ export default function BookAppointmentScreen() {
     }
 
     const chosenSlot = timeSlots.find((s) => s.id === selectedSlotId);
-    if (!chosenSlot || chosenSlot.isBooked) {
+    if (!chosenSlot || chosenSlot.isBooked || isSlotInPast(chosenSlot)) {
+      if (chosenSlot && isSlotInPast(chosenSlot)) {
+        Alert.alert('Giờ hẹn đã qua', 'Vui lòng chọn khung giờ sau thời điểm hiện tại.');
+        return;
+      }
       Alert.alert('Lịch đã kín', 'Khung giờ bạn chọn hiện đã kín lịch. Vui lòng chọn khung giờ khác.');
       return;
     }
@@ -334,6 +354,12 @@ export default function BookAppointmentScreen() {
 
     const finalDate = new Date(selectedDate);
     finalDate.setHours(chosenSlot.startHour, chosenSlot.startMinute, 0, 0);
+    if (finalDate.getTime() <= Date.now()) {
+      Alert.alert('Giờ hẹn đã qua', 'Không thể đặt lịch trước thời điểm hiện tại. Vui lòng chọn giờ khác.');
+      setSelectedSlotId(null);
+      setCurrentStep(1);
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -440,8 +466,8 @@ export default function BookAppointmentScreen() {
         <TouchableOpacity
           style={[styles.stepPill, currentStep === 2 && styles.stepPillActive]}
           onPress={() => {
-            if (hasCompleteProfile && selectedDoctorId && selectedSlotId) setCurrentStep(2);
-            else if (!hasCompleteProfile) setProfileModalVisible(true);
+            if (currentStep === 1) handleNextToStep2();
+            else setCurrentStep(2);
           }}
         >
           <View
@@ -650,28 +676,30 @@ export default function BookAppointmentScreen() {
 
           <View style={styles.slotsGrid}>
             {timeSlots.map((slot) => {
-              const isSelected = selectedSlotId === slot.id && !slot.isBooked;
+              const isPast = isSlotInPast(slot);
+              const isUnavailable = slot.isBooked || isPast;
+              const isSelected = selectedSlotId === slot.id && !isUnavailable;
               return (
                 <TouchableOpacity
                   key={slot.id}
                   style={[
                     styles.slotCard,
-                    slot.isBooked && styles.slotCardBooked,
+                    isUnavailable && styles.slotCardBooked,
                     isSelected && styles.slotCardActive,
                   ]}
-                  disabled={slot.isBooked}
+                  disabled={isUnavailable}
                   onPress={() => setSelectedSlotId(slot.id)}
                 >
                   <View style={styles.slotTopRow}>
                     <Ionicons
-                      name={slot.isBooked ? 'close-circle' : 'time-outline'}
+                      name={isUnavailable ? 'close-circle' : 'time-outline'}
                       size={16}
-                      color={slot.isBooked ? '#94A3B8' : isSelected ? '#0284C7' : '#334155'}
+                      color={isUnavailable ? '#94A3B8' : isSelected ? '#0284C7' : '#334155'}
                     />
                     <Text
                       style={[
                         styles.slotTimeText,
-                        slot.isBooked && styles.slotTimeBooked,
+                        isUnavailable && styles.slotTimeBooked,
                         isSelected && styles.slotTimeActive,
                       ]}
                     >
@@ -682,16 +710,16 @@ export default function BookAppointmentScreen() {
                   <View
                     style={[
                       styles.slotBadge,
-                      slot.isBooked ? styles.slotBadgeBooked : styles.slotBadgeAvailable,
+                      isUnavailable ? styles.slotBadgeBooked : styles.slotBadgeAvailable,
                     ]}
                   >
                     <Text
                       style={[
                         styles.slotBadgeText,
-                        slot.isBooked ? styles.slotBadgeTextBooked : styles.slotBadgeTextAvailable,
+                        isUnavailable ? styles.slotBadgeTextBooked : styles.slotBadgeTextAvailable,
                       ]}
                     >
-                      {slot.isBooked ? 'Đã kín lịch' : 'Còn trống'}
+                      {isPast ? 'Đã qua giờ' : slot.isBooked ? 'Đã kín lịch' : 'Còn trống'}
                     </Text>
                   </View>
                 </TouchableOpacity>

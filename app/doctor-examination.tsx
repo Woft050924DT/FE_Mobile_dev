@@ -17,6 +17,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { MedicalColors } from '../constants/Colors';
 import { api } from '../services/api';
 import { DisclaimerBanner } from '../components/DisclaimerBanner';
+import { useAuth } from '../context/AuthContext';
+import { sortAppointmentsByStatusAndDate } from '../utils/appointment-order';
 
 interface Disease {
   id: number;
@@ -142,6 +144,13 @@ export default function DoctorExaminationScreen() {
   }>();
 
   const router = useRouter();
+  const { isDoctor, isLoading: isAuthLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isAuthLoading && !isDoctor) {
+      router.replace('/(tabs)');
+    }
+  }, [isAuthLoading, isDoctor, router]);
 
   // Ca khám và Bệnh nhân đang được chọn
   const [currentAppointmentId, setCurrentAppointmentId] = useState<string | null>(
@@ -206,19 +215,23 @@ export default function DoctorExaminationScreen() {
 
   // 1. Fetch Doctor's appointments list
   useEffect(() => {
-    fetchDoctorAppointmentsList();
-  }, []);
+    if (!isAuthLoading && isDoctor) {
+      fetchDoctorAppointmentsList();
+    }
+  }, [isAuthLoading, isDoctor]);
 
   // 2. Fetch Catalogs & Patient data when patient is selected
   useEffect(() => {
-    loadCatalogs();
-  }, []);
+    if (!isAuthLoading && isDoctor) {
+      loadCatalogs();
+    }
+  }, [isAuthLoading, isDoctor]);
 
   useEffect(() => {
-    if (currentPatientId) {
+    if (!isAuthLoading && isDoctor && currentPatientId) {
       loadPatientMedicalProfile(currentPatientId);
     }
-  }, [currentPatientId]);
+  }, [currentPatientId, isAuthLoading, isDoctor]);
 
   const fetchDoctorAppointmentsList = async () => {
     try {
@@ -496,8 +509,17 @@ export default function DoctorExaminationScreen() {
   // =========================================================================
   // GIAO DIỆN 1: NẾU CHƯA CHỌN CA KHÁM / BỆNH NHÂN -> CHỌN TỪ DANH SÁCH CỦA BÁC SĨ
   // =========================================================================
+  if (isAuthLoading || !isDoctor) {
+    return (
+      <View style={styles.centerLoading}>
+        <ActivityIndicator size="large" color={MedicalColors.primary} />
+        <Text style={styles.loadingText}>Đang kiểm tra quyền truy cập...</Text>
+      </View>
+    );
+  }
+
   if (!currentAppointmentId || !currentPatientId) {
-    const filteredAppointments = doctorAppointments.filter((apt) => {
+    const filteredAppointments = sortAppointmentsByStatusAndDate(doctorAppointments.filter((apt) => {
       const q = appointmentSearch.toLowerCase().trim();
       const patientName = apt.patients?.full_name || '';
       const phone = apt.patients?.phone || '';
@@ -517,7 +539,7 @@ export default function DoctorExaminationScreen() {
         return apt.status === 'confirmed' || apt.status === 'in_progress';
       }
       return true;
-    });
+    }));
 
     return (
       <View style={styles.container}>
