@@ -260,9 +260,9 @@ export default function CskhAppointmentsScreen() {
           <Ionicons name="headset" size={14} color="#EA580C" />
           <Text style={styles.badgePillText}>Bàn Tiếp Nhận & Điều Phối CSKH</Text>
         </View>
-        <Text style={styles.cskhTitle}>Xác Nhận & Điều Phối Bác Sĩ Khám</Text>
+        <Text style={styles.cskhTitle}>Xác Nhận & Điều Phối Lịch Phòng Khám</Text>
         <Text style={styles.cskhSub}>
-          Tiếp nhận ca khám mới, gọi điện chốt địa chỉ & phân công bác sĩ phụ trách.
+          Tiếp nhận ca khám mới, gọi điện xác nhận & phân công phòng khám, bác sĩ phụ trách.
         </Text>
 
         {/* Mini stats */}
@@ -282,7 +282,8 @@ export default function CskhAppointmentsScreen() {
       <View style={styles.filterBar}>
         {[
           { key: 'pending', label: `Chờ duyệt (${pendingCount})` },
-          { key: 'confirmed', label: 'Đã nhận' },
+          { key: 'confirmed', label: 'Chờ đến' },
+          { key: 'checked_in', label: 'Đã đến' },
           { key: 'all', label: 'Tất cả' },
         ].map((tab) => (
           <TouchableOpacity
@@ -334,7 +335,7 @@ export default function CskhAppointmentsScreen() {
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={styles.typeBadge}>
-                    <Text style={styles.typeText}>Khám tại nhà</Text>
+                    <Text style={styles.typeText}>Khám phòng khám</Text>
                   </View>
                   <AppointmentStatusBadge status={item.status} />
                 </View>

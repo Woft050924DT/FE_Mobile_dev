@@ -41,7 +41,7 @@ interface AppointmentItem {
 
 export default function AppointmentsScreen() {
   const router = useRouter();
-  const { user, role, token, loginStaff } = useAuth();
+  const { user, role, token, isDoctor } = useAuth();
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -49,20 +49,9 @@ export default function AppointmentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
-  // Cho phép chuyển đổi chế độ xem để kiểm thử cả 2 vai trò: Bác sĩ / Bệnh nhân
-  const [viewMode, setViewMode] = useState<'doctor' | 'patient'>(
-    role === 'doctor' || user?.role === 'doctor' ? 'doctor' : 'patient'
-  );
-
-  useEffect(() => {
-    if (role === 'doctor' || user?.role === 'doctor') {
-      setViewMode('doctor');
-    }
-  }, [role, user]);
-
   useEffect(() => {
     fetchAppointments();
-  }, [token, viewMode]);
+  }, [token]);
 
   const fetchAppointments = async () => {
     if (!token) {
@@ -212,22 +201,6 @@ export default function AppointmentsScreen() {
     );
   };
 
-  // Đăng nhập nhanh tài khoản Bác sĩ để test trực tiếp
-  const handleQuickDoctorLogin = async () => {
-    try {
-      setIsLoading(true);
-      await loginStaff('doctor@hospital.local', 'Doctor@123');
-      setViewMode('doctor');
-      Alert.alert('Thành công', 'Đã chuyển sang tài khoản Bác sĩ (BS. Nguyễn Văn A)');
-    } catch {
-      Alert.alert('Lỗi', 'Không thể đăng nhập bác sĩ. Vui lòng thử lại.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const isDoctor = viewMode === 'doctor';
-
   const filteredAppointments = appointments.filter((item) => {
     if (filterStatus === 'all') return true;
     return item.status === filterStatus;
@@ -266,52 +239,50 @@ export default function AppointmentsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Thanh chuyển đổi vai trò (Doctor / Patient) để trải nghiệm toàn diện */}
-      <View style={styles.roleSwitchBar}>
-        <View style={styles.roleInfo}>
-          <Ionicons
-            name={isDoctor ? 'medical' : 'person'}
-            size={18}
-            color={isDoctor ? '#0D9488' : '#0284C7'}
-          />
-          <Text style={styles.roleTitle}>
-            {isDoctor ? 'Giao diện Bác sĩ Khám tại nhà' : 'Lịch khám của Bệnh nhân'}
-          </Text>
-        </View>
-
-        <View style={styles.roleToggleGroup}>
+      {/* Thanh tiêu đề vai trò tự động theo tài khoản đang đăng nhập */}
+      {isDoctor ? (
+        <View style={styles.roleBannerDoctor}>
+          <View style={styles.roleInfo}>
+            <View style={styles.iconCircleDoctor}>
+              <Ionicons name="medical" size={18} color="#0D9488" />
+            </View>
+            <View>
+              <Text style={styles.roleTitleDoctor}>Lịch Khám Của Bác Sĩ Tại Nhà</Text>
+              <Text style={styles.roleSubTitle}>
+                {user?.fullName ? `BS. ${user.fullName}` : 'Bác sĩ chuyên khoa'} • {appointments.length} ca khám
+              </Text>
+            </View>
+          </View>
           <TouchableOpacity
-            style={[styles.roleBtn, !isDoctor && styles.roleBtnActive]}
-            onPress={() => setViewMode('patient')}
+            style={styles.refreshIconBtn}
+            onPress={fetchAppointments}
+            disabled={isLoading}
           >
-            <Text style={[styles.roleBtnText, !isDoctor && styles.roleBtnTextActive]}>
-              Bệnh nhân
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.roleBtn, isDoctor && styles.roleBtnActiveDoctor]}
-            onPress={() => {
-              setViewMode('doctor');
-              if (role !== 'doctor') {
-                // Nếu chưa có token bác sĩ, gợi ý đăng nhập nhanh
-                Alert.alert(
-                  'Kích hoạt phiên Bác sĩ',
-                  'Bạn có muốn tự động kết nối tài khoản Bác sĩ (doctor@hospital.local) để thao tác nhận ca và kê đơn EMR không?',
-                  [
-                    { text: 'Chỉ xem trước', style: 'cancel' },
-                    { text: 'Đăng nhập Bác sĩ', onPress: handleQuickDoctorLogin },
-                  ]
-                );
-              }
-            }}
-          >
-            <Text style={[styles.roleBtnText, isDoctor && styles.roleBtnTextActive]}>
-              Bác sĩ
-            </Text>
+            <Ionicons name="refresh" size={18} color="#0D9488" />
           </TouchableOpacity>
         </View>
-      </View>
+      ) : (
+        <View style={styles.roleBannerPatient}>
+          <View style={styles.roleInfo}>
+            <View style={styles.iconCirclePatient}>
+              <Ionicons name="calendar" size={18} color="#0284C7" />
+            </View>
+            <View>
+              <Text style={styles.roleTitlePatient}>Lịch Khám Tại Nhà Của Bạn</Text>
+              <Text style={styles.roleSubTitle}>
+                Theo dõi tiến trình ca khám & hồ sơ bệnh án EMR
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.refreshIconBtn}
+            onPress={fetchAppointments}
+            disabled={isLoading}
+          >
+            <Ionicons name="refresh" size={18} color="#0284C7" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Bảng thống kê nhanh dành cho Bác sĩ */}
       {isDoctor && (
@@ -620,50 +591,72 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8FAFC',
   },
-  roleSwitchBar: {
+  roleBannerDoctor: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F0FDFA',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: '#CCFBF1',
+  },
+  roleBannerPatient: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#BAE6FD',
   },
   roleInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 10,
+    flex: 1,
   },
-  roleTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  roleToggleGroup: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 20,
-    padding: 2,
-  },
-  roleBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  iconCircleDoctor: {
+    width: 36,
+    height: 36,
     borderRadius: 18,
+    backgroundColor: '#CCFBF1',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  roleBtnActive: {
-    backgroundColor: '#0284C7',
+  iconCirclePatient: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E0F2FE',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  roleBtnActiveDoctor: {
-    backgroundColor: '#0D9488',
+  roleTitleDoctor: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0F766E',
   },
-  roleBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
+  roleTitlePatient: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0369A1',
+  },
+  roleSubTitle: {
+    fontSize: 11,
     color: '#64748B',
+    marginTop: 2,
   },
-  roleBtnTextActive: {
-    color: '#FFFFFF',
+  refreshIconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   doctorStatsRow: {
     flexDirection: 'row',

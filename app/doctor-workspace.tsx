@@ -118,7 +118,7 @@ export default function DoctorWorkspaceScreen() {
 
   const handleUpdateStatus = async (
     appointmentId: string,
-    newStatus: 'in_progress' | 'cancelled',
+    newStatus: 'checked_in' | 'in_progress' | 'cancelled',
     label: string
   ) => {
     try {
@@ -146,6 +146,7 @@ export default function DoctorWorkspaceScreen() {
   });
 
   const countConfirmed = appointments.filter((a) => a.status === 'confirmed').length;
+  const countCheckedIn = appointments.filter((a) => a.status === 'checked_in').length;
   const countInProgress = appointments.filter((a) => a.status === 'in_progress').length;
   const countCompleted = appointments.filter((a) => a.status === 'completed').length;
 
@@ -161,7 +162,7 @@ export default function DoctorWorkspaceScreen() {
           {user?.fullName ? `BS. ${user.fullName}` : 'BS. Nguyễn Văn A'}
         </Text>
         <Text style={styles.doctorSub}>
-          Bác sĩ chuyên khoa khám chữa bệnh tại nhà & Kê đơn EMR.
+          Bác sĩ chuyên khoa khám chữa bệnh tại phòng khám & Kê đơn EMR.
         </Text>
 
         {/* Doctor KPI stats */}
@@ -185,7 +186,8 @@ export default function DoctorWorkspaceScreen() {
       <View style={styles.filterBar}>
         {[
           { key: 'all', label: 'Tất cả' },
-          { key: 'confirmed', label: `Chờ khám (${countConfirmed})` },
+          { key: 'confirmed', label: `Chờ đến (${countConfirmed})` },
+          { key: 'checked_in', label: `Đã đến (${countCheckedIn})` },
           { key: 'in_progress', label: `Đang khám (${countInProgress})` },
           { key: 'completed', label: 'Hoàn tất' },
         ].map((tab) => (
@@ -233,7 +235,7 @@ export default function DoctorWorkspaceScreen() {
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={styles.typeBadge}>
-                    <Text style={styles.typeBadgeText}>Khám tại nhà</Text>
+                    <Text style={styles.typeBadgeText}>Khám phòng khám</Text>
                   </View>
                   <AppointmentStatusBadge status={item.status} />
                 </View>
@@ -317,11 +319,24 @@ export default function DoctorWorkspaceScreen() {
                       style={styles.startTripBtn}
                       disabled={isProcessing}
                       onPress={() =>
-                        handleUpdateStatus(item.id, 'in_progress', 'Đang di chuyển đến khám')
+                        handleUpdateStatus(item.id, 'checked_in', 'Bệnh nhân đã đến phòng khám')
                       }
                     >
-                      <Ionicons name="navigate" size={16} color="#FFFFFF" />
-                      <Text style={styles.startTripBtnText}>Bắt đầu di chuyển</Text>
+                      <Ionicons name="business-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.startTripBtnText}>Tiếp nhận Check-in</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {item.status === 'checked_in' && (
+                    <TouchableOpacity
+                      style={styles.startTripBtn}
+                      disabled={isProcessing}
+                      onPress={() =>
+                        handleUpdateStatus(item.id, 'in_progress', 'Bắt đầu khám tại phòng')
+                      }
+                    >
+                      <Ionicons name="enter-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.startTripBtnText}>Gọi vào khám</Text>
                     </TouchableOpacity>
                   )}
 

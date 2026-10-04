@@ -29,10 +29,12 @@ export const MedicalColors = {
   status: {
     pending: { bg: '#FEF3C7', text: '#B45309', label: 'Chờ xác nhận' },
     confirmed: { bg: '#E0F2FE', text: '#0369A1', label: 'Đã xác nhận' },
+    checked_in: { bg: '#E0E7FF', text: '#4338CA', label: 'Đã đến phòng khám' },
     in_progress: { bg: '#EDE9FE', text: '#6D28D9', label: 'Đang khám' },
     completed: { bg: '#D1FAE5', text: '#047857', label: 'Hoàn thành' },
     cancelled: { bg: '#FEE2E2', text: '#B91C1C', label: 'Đã hủy' },
     no_show: { bg: '#F1F5F9', text: '#64748B', label: 'Vắng mặt' },
+    rescheduled: { bg: '#F3E8FF', text: '#7E22CE', label: 'Đã dời lịch' },
   },
 
   severity: {

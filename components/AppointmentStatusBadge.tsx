@@ -6,10 +6,12 @@ import { MedicalColors } from '../constants/Colors';
 export type AppointmentStatus =
   | 'pending'
   | 'confirmed'
+  | 'checked_in'
   | 'in_progress'
   | 'completed'
   | 'cancelled'
-  | 'no_show';
+  | 'no_show'
+  | 'rescheduled';
 
 interface Props {
   status: AppointmentStatus | string;
@@ -17,7 +19,7 @@ interface Props {
 }
 
 export const AppointmentStatusBadge: React.FC<Props> = ({ status, size = 'md' }) => {
-  const cfg = MedicalColors.status[status as AppointmentStatus] || {
+  const cfg = (MedicalColors.status as any)[status as AppointmentStatus] || {
     bg: '#F1F5F9',
     text: '#64748B',
     label: status,
@@ -29,6 +31,8 @@ export const AppointmentStatusBadge: React.FC<Props> = ({ status, size = 'md' })
         return 'time-outline';
       case 'confirmed':
         return 'checkmark-circle-outline';
+      case 'checked_in':
+        return 'business-outline';
       case 'in_progress':
         return 'medical-outline';
       case 'completed':
@@ -37,6 +41,8 @@ export const AppointmentStatusBadge: React.FC<Props> = ({ status, size = 'md' })
         return 'close-circle-outline';
       case 'no_show':
         return 'person-remove-outline';
+      case 'rescheduled':
+        return 'calendar-outline';
       default:
         return 'information-circle-outline';
     }
