@@ -105,6 +105,21 @@ export default function TabLayout() {
         }}
       />
 
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Cá nhân',
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'person' : 'person-outline'}
+              size={24}
+              color={color}
+            />
+          ),
+          headerTitle: 'Thông tin cá nhân & Hồ sơ',
+        }}
+      />
+
       {/* Ẩn tab 'two' mặc định nếu có */}
       <Tabs.Screen
         name="two"

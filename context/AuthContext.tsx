@@ -23,6 +23,7 @@ interface AuthContextType {
   loginStaff: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   switchRole: (newRole: 'patient' | 'doctor' | 'cskh') => Promise<void>;
+  updateUser: (updates: Partial<UserProfile>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -140,6 +141,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole(null);
   };
 
+  const updateUser = async (updates: Partial<UserProfile>) => {
+    if (!user) return;
+    const updated: UserProfile = { ...user, ...updates };
+    setUser(updated);
+    await storage.setItem('user_profile', JSON.stringify(updated));
+  };
+
   const isDoctor = role === 'doctor' || user?.role === 'doctor';
   const isCskh = role === 'cskh' || user?.role === 'cskh';
   const isPatient = !isDoctor && !isCskh;
@@ -159,6 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginStaff,
         logout,
         switchRole,
+        updateUser,
       }}
     >
       {children}

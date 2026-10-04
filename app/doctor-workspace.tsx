@@ -8,7 +8,9 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  Modal,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,6 +18,11 @@ import { MedicalColors } from '../constants/Colors';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { AppointmentStatusBadge } from '../components/AppointmentStatusBadge';
+import {
+  canRequestAppointmentChange,
+  getAppointmentStartBlockMessage,
+} from '../utils/appointment-timing';
+import { sortAppointmentsByStatusAndDate } from '../utils/appointment-order';
 
 interface AppointmentItem {
   id: string;
@@ -42,6 +49,10 @@ export default function DoctorWorkspaceScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [changeRequestAppointment, setChangeRequestAppointment] = useState<AppointmentItem | null>(null);
+  const [changeRequestAction, setChangeRequestAction] = useState<'reschedule' | 'cancel'>('reschedule');
+  const [changeRequestReason, setChangeRequestReason] = useState('');
+  const [submittedChangeRequestIds, setSubmittedChangeRequestIds] = useState<string[]>([]);
 
   useEffect(() => {
     fetchDoctorAppointments();
@@ -116,11 +127,61 @@ export default function DoctorWorkspaceScreen() {
     fetchDoctorAppointments();
   };
 
+  const openChangeRequest = (
+    appointment: AppointmentItem,
+    action: 'reschedule' | 'cancel'
+  ) => {
+    setChangeRequestAppointment(appointment);
+    setChangeRequestAction(action);
+    setChangeRequestReason('');
+  };
+
+  const submitDoctorChangeRequest = async () => {
+    if (!changeRequestAppointment || !changeRequestReason.trim()) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập lý do yêu cầu.');
+      return;
+    }
+
+    try {
+      setActionLoadingId(changeRequestAppointment.id);
+      await api.post(
+        `/appointments/${changeRequestAppointment.id}/doctor-change-request`,
+        { action: changeRequestAction, reason: changeRequestReason.trim() }
+      );
+      setSubmittedChangeRequestIds((ids) =>
+        ids.includes(changeRequestAppointment.id) ? ids : [...ids, changeRequestAppointment.id]
+      );
+      const requestLabel = changeRequestAction === 'reschedule' ? 'đổi lịch' : 'hủy lịch';
+      setChangeRequestAppointment(null);
+      setChangeRequestReason('');
+      Alert.alert(
+        'Đã gửi yêu cầu cho CSKH',
+        `Yêu cầu ${requestLabel} đã được gửi. Lịch hiện tại chưa thay đổi; CSKH sẽ liên hệ bệnh nhân và xử lý tiếp.`
+      );
+    } catch (err: any) {
+      Alert.alert(
+        'Không gửi được yêu cầu',
+        err.response?.data?.message || 'Vui lòng thử lại sau.'
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const handleUpdateStatus = async (
     appointmentId: string,
-    newStatus: 'in_progress' | 'cancelled',
-    label: string
+    newStatus: 'checked_in' | 'in_progress' | 'cancelled',
+    label: string,
+    scheduledAt?: string
   ) => {
+    if (newStatus === 'in_progress') {
+      const blockMessage = getAppointmentStartBlockMessage(scheduledAt);
+      if (blockMessage) {
+        Alert.alert('Chưa thể bắt đầu khám', blockMessage);
+        return;
+      }
+    }
+
     try {
       setActionLoadingId(appointmentId);
       await api.patch(`/appointments/${appointmentId}/status`, {
@@ -140,12 +201,13 @@ export default function DoctorWorkspaceScreen() {
     }
   };
 
-  const filtered = appointments.filter((item) => {
+  const filtered = sortAppointmentsByStatusAndDate(appointments.filter((item) => {
     if (filterStatus === 'all') return true;
     return item.status === filterStatus;
-  });
+  }));
 
   const countConfirmed = appointments.filter((a) => a.status === 'confirmed').length;
+  const countCheckedIn = appointments.filter((a) => a.status === 'checked_in').length;
   const countInProgress = appointments.filter((a) => a.status === 'in_progress').length;
   const countCompleted = appointments.filter((a) => a.status === 'completed').length;
 
@@ -161,7 +223,7 @@ export default function DoctorWorkspaceScreen() {
           {user?.fullName ? `BS. ${user.fullName}` : 'BS. Nguyễn Văn A'}
         </Text>
         <Text style={styles.doctorSub}>
-          Bác sĩ chuyên khoa khám chữa bệnh tại nhà & Kê đơn EMR.
+          Bác sĩ chuyên khoa khám chữa bệnh tại phòng khám & Kê đơn EMR.
         </Text>
 
         {/* Doctor KPI stats */}
@@ -185,7 +247,8 @@ export default function DoctorWorkspaceScreen() {
       <View style={styles.filterBar}>
         {[
           { key: 'all', label: 'Tất cả' },
-          { key: 'confirmed', label: `Chờ khám (${countConfirmed})` },
+          { key: 'confirmed', label: `Chờ đến (${countConfirmed})` },
+          { key: 'checked_in', label: `Đã đến (${countCheckedIn})` },
           { key: 'in_progress', label: `Đang khám (${countInProgress})` },
           { key: 'completed', label: 'Hoàn tất' },
         ].map((tab) => (
@@ -226,6 +289,10 @@ export default function DoctorWorkspaceScreen() {
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
             const isProcessing = actionLoadingId === item.id;
+            const canRequestChange = canRequestAppointmentChange(
+              item.status,
+              item.scheduled_at
+            );
             const patientName = item.patients?.full_name || 'Bệnh nhân';
             const patientPhone = item.patients?.phone || '0901234567';
 
@@ -233,7 +300,7 @@ export default function DoctorWorkspaceScreen() {
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={styles.typeBadge}>
-                    <Text style={styles.typeBadgeText}>Khám tại nhà</Text>
+                    <Text style={styles.typeBadgeText}>Khám phòng khám</Text>
                   </View>
                   <AppointmentStatusBadge status={item.status} />
                 </View>
@@ -312,16 +379,98 @@ export default function DoctorWorkspaceScreen() {
                   </TouchableOpacity>
 
                   {/* Nút 2: Workflow theo trạng thái ca khám */}
+                  {(item.status === 'confirmed' || item.status === 'pending') &&
+                    submittedChangeRequestIds.includes(item.id) && (
+                      <Text style={styles.changeRequestPendingText}>
+                        Đã gửi yêu cầu; đang chờ CSKH xử lý
+                      </Text>
+                    )}
+
                   {item.status === 'confirmed' && (
                     <TouchableOpacity
                       style={styles.startTripBtn}
                       disabled={isProcessing}
                       onPress={() =>
-                        handleUpdateStatus(item.id, 'in_progress', 'Đang di chuyển đến khám')
+                        handleUpdateStatus(item.id, 'checked_in', 'Bệnh nhân đã đến phòng khám')
                       }
                     >
-                      <Ionicons name="navigate" size={16} color="#FFFFFF" />
-                      <Text style={styles.startTripBtnText}>Bắt đầu di chuyển</Text>
+                      <Ionicons name="business-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.startTripBtnText}>Tiếp nhận Check-in</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {(item.status === 'confirmed' || item.status === 'pending') &&
+                    !submittedChangeRequestIds.includes(item.id) && (
+                    <>
+                    <View style={styles.changeRequestActions}>
+                      <TouchableOpacity
+                        style={[
+                          styles.rescheduleRequestBtn,
+                          (!canRequestChange || isProcessing) && styles.changeRequestBtnDisabled,
+                        ]}
+                        disabled={!canRequestChange || isProcessing}
+                        onPress={() => openChangeRequest(item, 'reschedule')}
+                      >
+                        <Ionicons
+                          name="calendar-outline"
+                          size={16}
+                          color={canRequestChange ? '#0369A1' : '#94A3B8'}
+                        />
+                        <Text
+                          style={[
+                            styles.changeRequestBtnText,
+                            !canRequestChange && styles.changeRequestBtnTextDisabled,
+                          ]}
+                        >
+                          Yêu cầu đổi giờ
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.cancelRequestBtn,
+                          (!canRequestChange || isProcessing) && styles.changeRequestBtnDisabled,
+                        ]}
+                        disabled={!canRequestChange || isProcessing}
+                        onPress={() => openChangeRequest(item, 'cancel')}
+                      >
+                        <Ionicons
+                          name="close-circle-outline"
+                          size={16}
+                          color={canRequestChange ? '#B91C1C' : '#94A3B8'}
+                        />
+                        <Text
+                          style={[
+                            styles.cancelRequestBtnText,
+                            !canRequestChange && styles.changeRequestBtnTextDisabled,
+                          ]}
+                        >
+                          Yêu cầu hủy
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {!canRequestChange && (
+                      <Text style={styles.changeRequestUnavailableText}>
+                        Chỉ gửi yêu cầu khi lịch chưa bắt đầu và còn trước giờ hẹn.
+                      </Text>
+                    )}
+                    </>
+                  )}
+
+                  {item.status === 'checked_in' && (
+                    <TouchableOpacity
+                      style={styles.startTripBtn}
+                      disabled={isProcessing}
+                      onPress={() =>
+                        handleUpdateStatus(
+                          item.id,
+                          'in_progress',
+                          'Bắt đầu khám tại phòng',
+                          item.scheduled_at
+                        )
+                      }
+                    >
+                      <Ionicons name="enter-outline" size={16} color="#FFFFFF" />
+                      <Text style={styles.startTripBtnText}>Gọi vào khám</Text>
                     </TouchableOpacity>
                   )}
 
@@ -365,6 +514,54 @@ export default function DoctorWorkspaceScreen() {
           }}
         />
       )}
+
+      <Modal
+        visible={changeRequestAppointment !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setChangeRequestAppointment(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.changeRequestModal}>
+            <Text style={styles.changeRequestModalTitle}>
+              {changeRequestAction === 'reschedule' ? 'Yêu cầu đổi lịch' : 'Yêu cầu hủy lịch'}
+            </Text>
+            <Text style={styles.changeRequestModalDescription}>
+              CSKH sẽ thông báo để bệnh nhân chọn phương án. Lịch hiện tại chưa thay đổi.
+            </Text>
+            <TextInput
+              style={styles.changeRequestReasonInput}
+              value={changeRequestReason}
+              onChangeText={setChangeRequestReason}
+              placeholder="Nhập lý do gửi CSKH"
+              placeholderTextColor="#94A3B8"
+              multiline
+              textAlignVertical="top"
+              maxLength={500}
+            />
+            <View style={styles.changeRequestModalActions}>
+              <TouchableOpacity
+                style={styles.changeRequestDismissBtn}
+                onPress={() => setChangeRequestAppointment(null)}
+                disabled={actionLoadingId !== null}
+              >
+                <Text style={styles.changeRequestDismissText}>Đóng</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.changeRequestSubmitBtn}
+                onPress={submitDoctorChangeRequest}
+                disabled={actionLoadingId !== null}
+              >
+                {actionLoadingId === changeRequestAppointment?.id ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.changeRequestSubmitText}>Gửi CSKH</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -628,6 +825,120 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  changeRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  rescheduleRequestBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#E0F2FE',
+  },
+  changeRequestBtnText: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  changeRequestBtnDisabled: {
+    backgroundColor: '#F1F5F9',
+  },
+  changeRequestBtnTextDisabled: {
+    color: '#94A3B8',
+  },
+  changeRequestUnavailableText: {
+    marginTop: 6,
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  changeRequestPendingText: {
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: '#FEF3C7',
+    color: '#92400E',
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cancelRequestBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+  },
+  cancelRequestBtnText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+  },
+  changeRequestModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    gap: 12,
+  },
+  changeRequestModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  changeRequestModalDescription: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  changeRequestReasonInput: {
+    minHeight: 104,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    padding: 12,
+    color: '#0F172A',
+  },
+  changeRequestModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  changeRequestDismissBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  changeRequestDismissText: {
+    color: '#475569',
+    fontWeight: '700',
+  },
+  changeRequestSubmitBtn: {
+    minWidth: 110,
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#0D9488',
+  },
+  changeRequestSubmitText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
   center: {
     padding: 40,

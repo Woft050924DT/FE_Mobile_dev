@@ -10,6 +10,8 @@ import {
   Linking,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -17,6 +19,12 @@ import { MedicalColors } from '../../constants/Colors';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { AppointmentStatusBadge } from '../../components/AppointmentStatusBadge';
+import {
+  canRequestAppointmentChange,
+  getAppointmentStartBlockMessage,
+} from '../../utils/appointment-timing';
+import { sortAppointmentsByStatusAndDate } from '../../utils/appointment-order';
+import { PatientProfileModal } from '../../components/PatientProfileModal';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -28,18 +36,58 @@ export default function HomeScreen() {
   const [doctorRefreshing, setDoctorRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [filterTab, setFilterTab] = useState<'all' | 'unexamined' | 'examined'>('all');
+  const [changeRequestAppointment, setChangeRequestAppointment] = useState<any | null>(null);
+  const [changeRequestAction, setChangeRequestAction] = useState<'reschedule' | 'cancel'>('reschedule');
+  const [changeRequestReason, setChangeRequestReason] = useState('');
+  const [submittedChangeRequestIds, setSubmittedChangeRequestIds] = useState<string[]>([]);
 
   // ================= STATE DÀNH CHO CSKH =================
   const [cskhPendingCount, setCskhPendingCount] = useState(0);
   const [cskhFollowUpCount, setCskhFollowUpCount] = useState(0);
+
+  // ================= STATE HỒ SƠ BỆNH NHÂN =================
+  const [patientModalVisible, setPatientModalVisible] = useState(false);
+  const [patientProfile, setPatientProfile] = useState<any>(null);
 
   useEffect(() => {
     if (isDoctor) {
       fetchDoctorAppointments();
     } else if (isCskh) {
       fetchCskhStats();
+    } else if (user?.id) {
+      fetchPatientProfile();
     }
-  }, [isDoctor, isCskh]);
+  }, [isDoctor, isCskh, user?.id]);
+
+  const fetchPatientProfile = async () => {
+    try {
+      let res: any;
+      try {
+        res = await api.get('/patients/me');
+      } catch {
+        if (user?.id) {
+          res = await api.get(`/patients/${user.id}`);
+        }
+      }
+      if (res?.data?.data) {
+        setPatientProfile(res.data.data);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const isProfileComplete = (profile: any) => {
+    if (!profile) return false;
+    const hasName =
+      !!profile.full_name &&
+      profile.full_name.trim().length >= 2 &&
+      !profile.full_name.startsWith('Bệnh nhân ');
+    const hasPhone = !!profile.phone && profile.phone.trim().length >= 9;
+    const hasDob = !!profile.date_of_birth;
+    const hasGender = !!profile.gender;
+    return hasName && hasPhone && hasDob && hasGender;
+  };
 
   const fetchDoctorAppointments = async () => {
     try {
@@ -124,8 +172,17 @@ export default function HomeScreen() {
   const handleDoctorUpdateStatus = async (
     appointmentId: string,
     newStatus: 'in_progress' | 'completed',
-    statusLabel: string
+    statusLabel: string,
+    scheduledAt?: string
   ) => {
+    if (newStatus === 'in_progress') {
+      const blockMessage = getAppointmentStartBlockMessage(scheduledAt);
+      if (blockMessage) {
+        Alert.alert('Chưa thể bắt đầu khám', blockMessage);
+        return;
+      }
+    }
+
     try {
       setActionLoadingId(appointmentId);
       await api.patch(`/appointments/${appointmentId}/status`, { status: newStatus });
@@ -136,6 +193,43 @@ export default function HomeScreen() {
     } catch {
       setDoctorAppointments((prev) =>
         prev.map((item) => (item.id === appointmentId ? { ...item, status: newStatus } : item))
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const openChangeRequest = (appointment: any, action: 'reschedule' | 'cancel') => {
+    setChangeRequestAppointment(appointment);
+    setChangeRequestAction(action);
+    setChangeRequestReason('');
+  };
+
+  const submitDoctorChangeRequest = async () => {
+    if (!changeRequestAppointment || !changeRequestReason.trim()) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập lý do yêu cầu để gửi CSKH.');
+      return;
+    }
+
+    try {
+      setActionLoadingId(changeRequestAppointment.id);
+      await api.post(
+        `/appointments/${changeRequestAppointment.id}/doctor-change-request`,
+        { action: changeRequestAction, reason: changeRequestReason.trim() }
+      );
+      setSubmittedChangeRequestIds((ids) =>
+        ids.includes(changeRequestAppointment.id) ? ids : [...ids, changeRequestAppointment.id]
+      );
+      setChangeRequestAppointment(null);
+      setChangeRequestReason('');
+      Alert.alert(
+        'Đã gửi yêu cầu cho CSKH',
+        'Lịch hẹn chưa thay đổi. CSKH sẽ liên hệ bệnh nhân và xử lý yêu cầu.'
+      );
+    } catch (err: any) {
+      Alert.alert(
+        'Không gửi được yêu cầu',
+        err.response?.data?.message || 'Vui lòng thử lại sau.'
       );
     } finally {
       setActionLoadingId(null);
@@ -156,7 +250,7 @@ export default function HomeScreen() {
     day: 'numeric',
   });
 
-  const filteredDoctorAppointments = doctorAppointments.filter((item) => {
+  const filteredDoctorAppointments = sortAppointmentsByStatusAndDate(doctorAppointments.filter((item) => {
     if (filterTab === 'unexamined') {
       return item.status === 'confirmed' || item.status === 'in_progress' || item.status === 'pending';
     }
@@ -164,7 +258,7 @@ export default function HomeScreen() {
       return item.status === 'completed';
     }
     return true;
-  });
+  }));
 
   // ==============================================================
   // 1. GIAO DIỆN TRỰC TIẾP CHO BÁC SĨ (KHI ĐĂNG NHẬP LÀ DOCTOR)
@@ -337,6 +431,7 @@ export default function HomeScreen() {
           ) : (
             filteredDoctorAppointments.map((apt) => {
               const isProcessing = actionLoadingId === apt.id;
+              const canRequestChange = canRequestAppointmentChange(apt.status, apt.scheduled_at);
               const patientName = apt.patients?.full_name || 'Bệnh nhân';
               const patientPhone = apt.patients?.phone || '0901234567';
 
@@ -422,7 +517,12 @@ export default function HomeScreen() {
                         style={styles.startTripBtn}
                         disabled={isProcessing}
                         onPress={() =>
-                          handleDoctorUpdateStatus(apt.id, 'in_progress', 'Đang di chuyển đến khám')
+                          handleDoctorUpdateStatus(
+                            apt.id,
+                            'in_progress',
+                            'Đang di chuyển đến khám',
+                            apt.scheduled_at
+                          )
                         }
                       >
                         <Ionicons name="navigate" size={15} color="#FFFFFF" />
@@ -465,11 +565,126 @@ export default function HomeScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+
+                  {(apt.status === 'pending' || apt.status === 'confirmed') && (
+                    <View style={styles.changeRequestSection}>
+                      {submittedChangeRequestIds.includes(apt.id) ? (
+                        <Text style={styles.changeRequestPendingText}>
+                          Đã gửi yêu cầu cho CSKH, đang chờ xử lý
+                        </Text>
+                      ) : (
+                        <>
+                          <Text style={styles.changeRequestHint}>
+                            Cần đổi hoặc hủy lịch? Gửi yêu cầu để CSKH trao đổi với bệnh nhân.
+                          </Text>
+                          <View style={styles.changeRequestActions}>
+                            <TouchableOpacity
+                              style={[
+                                styles.changeRequestBtn,
+                                !canRequestChange && styles.changeRequestBtnDisabled,
+                              ]}
+                              disabled={!canRequestChange || isProcessing}
+                              onPress={() => openChangeRequest(apt, 'reschedule')}
+                            >
+                              <Ionicons
+                                name="calendar-outline"
+                                size={16}
+                                color={canRequestChange ? '#0369A1' : '#94A3B8'}
+                              />
+                              <Text
+                                style={[
+                                  styles.changeRequestBtnText,
+                                  !canRequestChange && styles.changeRequestBtnTextDisabled,
+                                ]}
+                              >
+                                Yêu cầu đổi lịch
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.changeRequestBtn,
+                                styles.changeRequestCancelBtn,
+                                !canRequestChange && styles.changeRequestBtnDisabled,
+                              ]}
+                              disabled={!canRequestChange || isProcessing}
+                              onPress={() => openChangeRequest(apt, 'cancel')}
+                            >
+                              <Ionicons
+                                name="close-circle-outline"
+                                size={16}
+                                color={canRequestChange ? '#B91C1C' : '#94A3B8'}
+                              />
+                              <Text
+                                style={[
+                                  styles.changeRequestBtnText,
+                                  styles.changeRequestCancelText,
+                                  !canRequestChange && styles.changeRequestBtnTextDisabled,
+                                ]}
+                              >
+                                Yêu cầu hủy lịch
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                          {!canRequestChange && (
+                            <Text style={styles.changeRequestUnavailableText}>
+                              Chỉ gửi được yêu cầu khi lịch chưa bắt đầu và còn trước giờ hẹn.
+                            </Text>
+                          )}
+                        </>
+                      )}
+                    </View>
+                  )}
                 </View>
               );
             })
           )}
         </ScrollView>
+        <Modal
+          visible={!!changeRequestAppointment}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setChangeRequestAppointment(null)}
+        >
+          <View style={styles.changeRequestModalBackdrop}>
+            <View style={styles.changeRequestModal}>
+              <Text style={styles.changeRequestModalTitle}>
+                {changeRequestAction === 'reschedule' ? 'Yêu cầu đổi lịch hẹn' : 'Yêu cầu hủy lịch hẹn'}
+              </Text>
+              <Text style={styles.changeRequestModalText}>
+                Lịch hẹn không thay đổi ngay. CSKH sẽ trao đổi với bệnh nhân và xác nhận phương án.
+              </Text>
+              <TextInput
+                style={styles.changeRequestReasonInput}
+                value={changeRequestReason}
+                onChangeText={setChangeRequestReason}
+                placeholder="Nhập lý do gửi CSKH..."
+                multiline
+                textAlignVertical="top"
+                maxLength={500}
+              />
+              <View style={styles.changeRequestModalActions}>
+                <TouchableOpacity
+                  style={styles.changeRequestDismissBtn}
+                  disabled={actionLoadingId === changeRequestAppointment?.id}
+                  onPress={() => setChangeRequestAppointment(null)}
+                >
+                  <Text style={styles.changeRequestDismissText}>Đóng</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.changeRequestSubmitBtn}
+                  disabled={actionLoadingId === changeRequestAppointment?.id}
+                  onPress={submitDoctorChangeRequest}
+                >
+                  {actionLoadingId === changeRequestAppointment?.id ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.changeRequestSubmitText}>Gửi cho CSKH</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -605,21 +820,64 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Hero Banner: Đặt lịch khám tại nhà */}
+        {/* THÔNG BÁO TÌNH TRẠNG HỒ SƠ BỆNH NHÂN (ĐIỀU KIỆN TIÊN QUYẾT ĐỂ ĐẶT LỊCH) */}
+        {user && (
+          isProfileComplete(patientProfile) ? (
+            <View style={styles.profileReadyBanner}>
+              <Ionicons name="checkmark-circle" size={24} color="#059669" />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.profileReadyTitle}>Hồ sơ bệnh nhân hợp lệ</Text>
+                <Text style={styles.profileReadySub}>
+                  Đã cập nhật đủ Họ tên, SĐT, Ngày sinh & Giới tính. Sẵn sàng đăng ký khám bệnh.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.profileReadyBtn}
+                onPress={() => router.push('/(tabs)/profile' as any)}
+              >
+                <Text style={styles.profileReadyBtnText}>Xem hồ sơ</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.profileWarningBanner}>
+              <Ionicons name="alert-circle" size={26} color="#DC2626" />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.profileWarningTitle}>
+                  {patientProfile?.full_name?.startsWith('Bệnh nhân ')
+                    ? 'Cần đổi tên tạm sang Họ tên thật!'
+                    : 'Chưa đủ điều kiện đặt lịch khám!'}
+                </Text>
+                <Text style={styles.profileWarningSub}>
+                  {patientProfile?.full_name?.startsWith('Bệnh nhân ')
+                    ? `Bạn đang để tên tạm (${patientProfile.full_name}). Cần nhập họ tên thật để đủ điều kiện đặt lịch khám.`
+                    : 'Phòng khám bắt buộc có đủ Họ tên, SĐT, Ngày sinh, Giới tính để lập hồ sơ bệnh án trước khi đăng ký khám.'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.profileWarningBtn}
+                onPress={() => router.push('/(tabs)/profile' as any)}
+              >
+                <Text style={styles.profileWarningBtnText}>Bổ sung ngay</Text>
+              </TouchableOpacity>
+            </View>
+          )
+        )}
+
+        {/* Hero Banner: Đặt lịch khám tại phòng khám */}
         <View style={styles.heroCard}>
           <View style={styles.heroContent}>
             <View style={styles.pillBadge}>
-              <Text style={styles.pillText}>Bác sĩ đến tận nhà</Text>
+              <Text style={styles.pillText}>Phòng khám Đa khoa Quốc tế</Text>
             </View>
-            <Text style={styles.heroTitle}>Khám Chữa Bệnh Tại Nhà Chuẩn Y Khoa</Text>
+            <Text style={styles.heroTitle}>Khám Chữa Bệnh Tại Phòng Khám Chuẩn Y Khoa</Text>
             <Text style={styles.heroDesc}>
-              Bác sĩ chuyên khoa thăm khám trực tiếp, chẩn đoán theo mã ICD-10 và kê đơn thuốc điện tử.
+              Bác sĩ chuyên khoa thăm khám trực tiếp, chẩn đoán theo mã ICD-10 và lưu trữ hồ sơ bệnh án điện tử EMR.
             </Text>
             <TouchableOpacity
               style={styles.heroActionBtn}
               onPress={() => router.push('/book-appointment')}
             >
-              <Text style={styles.heroActionText}>Đặt lịch hẹn ngay</Text>
+              <Text style={styles.heroActionText}>Đặt lịch khám ngay</Text>
               <Ionicons name="arrow-forward" size={16} color="#0284C7" />
             </TouchableOpacity>
           </View>
@@ -649,7 +907,7 @@ export default function HomeScreen() {
               <Ionicons name="calendar" size={28} color="#16A34A" />
             </View>
             <Text style={styles.gridTitle}>Lịch Hẹn Của Bạn</Text>
-            <Text style={styles.gridSub}>Theo dõi bác sĩ di chuyển & giờ hẹn</Text>
+            <Text style={styles.gridSub}>Theo dõi ca khám & giờ hẹn bác sĩ</Text>
           </TouchableOpacity>
 
           {/* Card 3: Bệnh án EMR */}
@@ -675,19 +933,37 @@ export default function HomeScreen() {
             <Text style={styles.gridTitle}>Chăm Sóc 1-1</Text>
             <Text style={styles.gridSub}>Nhân viên CSKH chuyên trách hỗ trợ</Text>
           </TouchableOpacity>
+
+          {/* Card 5: Hồ Sơ Cá Nhân Bệnh Nhân */}
+          <TouchableOpacity
+            style={[styles.gridCard, { borderColor: '#BAE6FD' }]}
+            onPress={() => {
+              if (!user) {
+                router.push('/login');
+              } else {
+                router.push('/(tabs)/profile' as any);
+              }
+            }}
+          >
+            <View style={[styles.iconBox, { backgroundColor: '#E0F2FE' }]}>
+              <Ionicons name="person-circle" size={28} color="#0284C7" />
+            </View>
+            <Text style={styles.gridTitle}>Hồ Sơ Cá Nhân</Text>
+            <Text style={styles.gridSub}>Thông tin hành chính, BHYT & SĐT</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Quy trình 4 bước khám tại nhà dành cho Bệnh nhân */}
-        <Text style={styles.sectionTitle}>Quy trình khám chữa bệnh tại nhà</Text>
+        {/* Quy trình 4 bước khám tại phòng khám dành cho Bệnh nhân */}
+        <Text style={styles.sectionTitle}>Quy trình khám chữa bệnh tại phòng khám</Text>
         <View style={styles.timelineCard}>
           <View style={styles.timelineItem}>
             <View style={[styles.stepCircle, { backgroundColor: '#0284C7' }]}>
               <Text style={styles.stepNum}>1</Text>
             </View>
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>Khai triệu chứng qua Body Map</Text>
+              <Text style={styles.stepTitle}>Hoàn thiện hồ sơ & Khai Body Map</Text>
               <Text style={styles.stepDesc}>
-                Chọn vùng đau trên mô hình cơ thể, mô tả mức độ nhẹ / vừa / nặng.
+                Cập nhật thông tin cá nhân và đánh dấu vị trí đau trên mô hình 2D trực quan.
               </Text>
             </View>
           </View>
@@ -699,9 +975,9 @@ export default function HomeScreen() {
               <Text style={styles.stepNum}>2</Text>
             </View>
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>CSKH xác nhận & Điều phối bác sĩ</Text>
+              <Text style={styles.stepTitle}>Chọn Bác sĩ & Khung giờ khám</Text>
               <Text style={styles.stepDesc}>
-                Chuyên viên liên hệ xác thực và sắp xếp bác sĩ chuyên khoa phù hợp.
+                Lựa chọn bác sĩ phụ trách ca khám và chọn ngày giờ thuận tiện nhất.
               </Text>
             </View>
           </View>
@@ -713,9 +989,9 @@ export default function HomeScreen() {
               <Text style={styles.stepNum}>3</Text>
             </View>
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>Bác sĩ đến khám tại nhà</Text>
+              <Text style={styles.stepTitle}>Đến phòng khám & Khám bệnh</Text>
               <Text style={styles.stepDesc}>
-                Thăm khám lâm sàng, chẩn đoán ICD-10 và kê đơn thuốc điện tử.
+                Check-in tiếp đón tại Tầng 1, thăm khám lâm sàng, chẩn đoán ICD-10 và kê đơn thuốc.
               </Text>
             </View>
           </View>
@@ -727,9 +1003,9 @@ export default function HomeScreen() {
               <Text style={styles.stepNum}>4</Text>
             </View>
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>Chăm sóc & Nhắc lịch tái khám</Text>
+              <Text style={styles.stepTitle}>Nhận bệnh án EMR & Nhắc tái khám</Text>
               <Text style={styles.stepDesc}>
-                Tự động nhận thông báo nhắc lịch và chuyên viên CSKH hỗ trợ chu đáo.
+                Hồ sơ bệnh án điện tử và đơn thuốc lưu trữ an toàn, CSKH tự động nhắc lịch.
               </Text>
             </View>
           </View>
@@ -746,6 +1022,16 @@ export default function HomeScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* Modal Cập nhật Hồ sơ cá nhân bệnh nhân */}
+      {user?.id && (
+        <PatientProfileModal
+          visible={patientModalVisible}
+          patientId={user.id}
+          onClose={() => setPatientModalVisible(false)}
+          onSuccess={() => setPatientModalVisible(false)}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1252,6 +1538,126 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  changeRequestSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  changeRequestHint: {
+    fontSize: 12,
+    color: '#475569',
+    marginBottom: 8,
+  },
+  changeRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  changeRequestBtn: {
+    flex: 1,
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 9,
+    backgroundColor: '#F0F9FF',
+  },
+  changeRequestCancelBtn: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  changeRequestBtnDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  changeRequestBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  changeRequestCancelText: {
+    color: '#B91C1C',
+  },
+  changeRequestBtnTextDisabled: {
+    color: '#94A3B8',
+  },
+  changeRequestUnavailableText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#64748B',
+  },
+  changeRequestPendingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F766E',
+  },
+  changeRequestModalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+  },
+  changeRequestModal: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  changeRequestModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  changeRequestModalText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#475569',
+  },
+  changeRequestReasonInput: {
+    minHeight: 100,
+    marginTop: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    color: '#0F172A',
+  },
+  changeRequestModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 16,
+  },
+  changeRequestDismissBtn: {
+    minWidth: 84,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 9,
+    backgroundColor: '#F1F5F9',
+  },
+  changeRequestDismissText: {
+    fontWeight: '700',
+    color: '#475569',
+  },
+  changeRequestSubmitBtn: {
+    minWidth: 132,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 9,
+    backgroundColor: '#0D9488',
+  },
+  changeRequestSubmitText: {
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   /* ================= COMMON PATIENT STYLES ================= */
   gridContainer: {
     flexDirection: 'row',
@@ -1355,5 +1761,69 @@ const styles = StyleSheet.create({
     color: '#166534',
     marginTop: 2,
     lineHeight: 15,
+  },
+  profileReadyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1.5,
+    borderColor: '#86EFAC',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  profileReadyTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#15803D',
+  },
+  profileReadySub: {
+    fontSize: 12,
+    color: '#166534',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  profileReadyBtn: {
+    backgroundColor: '#15803D',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  profileReadyBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  profileWarningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  profileWarningTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#DC2626',
+  },
+  profileWarningSub: {
+    fontSize: 12,
+    color: '#991B1B',
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  profileWarningBtn: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  profileWarningBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 12,
   },
 });
