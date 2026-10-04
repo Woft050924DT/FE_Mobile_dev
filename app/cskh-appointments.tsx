@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Linking,
   Modal,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,7 @@ import { MedicalColors } from '../constants/Colors';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { AppointmentStatusBadge } from '../components/AppointmentStatusBadge';
+import { sortAppointmentsByStatusAndDate } from '../utils/appointment-order';
 
 interface AppointmentItem {
   id: string;
@@ -37,6 +39,10 @@ interface AppointmentItem {
     full_name: string;
     phone: string;
   };
+  patient?: {
+    full_name?: string;
+    phone?: string;
+  };
 }
 
 interface DoctorUser {
@@ -46,29 +52,142 @@ interface DoctorUser {
   email: string;
 }
 
+type ChangeRequestAction = 'reschedule' | 'cancel';
+type ChangeRequestStatus = 'pending' | 'awaiting_patient' | 'approved' | 'rejected';
+type ChangeRequestDecision = 'approved' | 'rejected';
+type PatientChangeChoice = 'reschedule' | 'change_doctor';
+
+interface AppointmentChangeRequest {
+  id: string;
+  appointmentId?: string;
+  appointment_id?: string;
+  patientId?: string;
+  patient_id?: string;
+  action?: ChangeRequestAction;
+  appointment_change_action?: ChangeRequestAction;
+  status?: ChangeRequestStatus;
+  appointment_change_request_status?: ChangeRequestStatus;
+  initiatedByRole?: string;
+  initiated_by_role?: string;
+  patientChoice?: PatientChangeChoice;
+  patient_choice?: PatientChangeChoice;
+  requestedScheduledAt?: string;
+  requested_scheduled_at?: string;
+  scheduledAt?: string;
+  currentScheduledAt?: string;
+  current_scheduled_at?: string;
+  reason?: string;
+  reviewNote?: string;
+  review_note?: string;
+  reviewedBy?: string;
+  reviewed_by?: string;
+  reviewer?: {
+    full_name?: string;
+  };
+  reviewedAt?: string;
+  reviewed_at?: string;
+  patients?: {
+    full_name?: string;
+    phone?: string;
+  };
+  patient?: {
+    full_name?: string;
+    phone?: string;
+  };
+  patients_change_requests_patient_idTopatients?: {
+    full_name?: string;
+    phone?: string;
+  };
+  appointments?: AppointmentItem;
+  appointment?: AppointmentItem;
+  appointments_appointment_idToappointments?: AppointmentItem;
+  appointments_change_requests_appointment_idToappointments?: AppointmentItem;
+}
+
 export default function CskhAppointmentsScreen() {
   const router = useRouter();
   const { user, token } = useAuth();
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>('pending');
+  const [activeQueue, setActiveQueue] = useState<'appointments' | 'change-requests'>('change-requests');
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [changeRequests, setChangeRequests] = useState<AppointmentChangeRequest[]>([]);
+  const [changeRequestStatus, setChangeRequestStatus] = useState<ChangeRequestStatus>('pending');
+  const [changeRequestPage, setChangeRequestPage] = useState(1);
+  const [changeRequestTotalPages, setChangeRequestTotalPages] = useState(1);
+  const [pendingChangeRequestCount, setPendingChangeRequestCount] = useState(0);
+  const [isLoadingChangeRequests, setIsLoadingChangeRequests] = useState(true);
+  const [changeRequestError, setChangeRequestError] = useState<string | null>(null);
 
   // Doctors
   const [doctors, setDoctors] = useState<DoctorUser[]>([]);
+  const [hasLoadedActiveDoctors, setHasLoadedActiveDoctors] = useState(false);
   const [selectedDoctorMap, setSelectedDoctorMap] = useState<Record<string, string>>({});
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
   // Modal assign doctor
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [currentApt, setCurrentApt] = useState<AppointmentItem | null>(null);
+  const [reviewRequest, setReviewRequest] = useState<AppointmentChangeRequest | null>(null);
+  const [reviewDecision, setReviewDecision] = useState<ChangeRequestDecision>('approved');
+  const [reviewNote, setReviewNote] = useState('');
+  const [replacementDoctorId, setReplacementDoctorId] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, [filterStatus]);
+  const fetchChangeRequests = useCallback(async (status: ChangeRequestStatus, page: number) => {
+    try {
+      setIsLoadingChangeRequests(true);
+      setChangeRequestError(null);
+      const res = await api.get('/appointments/change-requests', {
+        params: { status, page, limit: 10 },
+      });
+      const payload = res.data?.data ?? res.data;
+      const candidates = [
+        payload,
+        payload?.items,
+        payload?.requests,
+        payload?.changeRequests,
+        payload?.appointmentChangeRequests,
+        payload?.data,
+        payload?.data?.items,
+        payload?.data?.requests,
+        payload?.result?.items,
+        payload?.results,
+      ];
+      const items = candidates.find(Array.isArray);
+      if (!items) {
+        throw new Error('API trả về dữ liệu yêu cầu đổi/hủy không đúng định dạng.');
+      }
 
-  const fetchData = async () => {
+      setChangeRequests(items);
+      const pagination = payload?.meta || payload?.pagination || payload?.data?.meta || payload;
+      const totalCount = Number(pagination?.total ?? pagination?.totalItems ?? items.length);
+      const totalPages =
+        pagination?.totalPages ??
+        pagination?.total_pages ??
+        Math.ceil(totalCount / 10);
+      setChangeRequestTotalPages(Math.max(1, Number(totalPages) || 1));
+      if (status === 'pending') {
+        setPendingChangeRequestCount(totalCount);
+      }
+    } catch (err: any) {
+      setChangeRequests([]);
+      if (status === 'pending') {
+        setPendingChangeRequestCount(0);
+      }
+      setChangeRequestError(
+        err.response?.data?.message ||
+          err.message ||
+          'Không tải được hàng đợi yêu cầu đổi/hủy lịch.'
+      );
+    } finally {
+      setIsLoadingChangeRequests(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  const fetchData = useCallback(async () => {
     try {
       setIsLoading(true);
       const [aptRes, docRes] = await Promise.all([
@@ -84,7 +203,9 @@ export default function CskhAppointmentsScreen() {
 
       const docs = docRes.data?.data?.items || docRes.data?.data || [];
       setDoctors(docs);
+      setHasLoadedActiveDoctors(Array.isArray(docs));
     } catch {
+      setHasLoadedActiveDoctors(false);
       // Mock data cho CSKH thử nghiệm
       setAppointments([
         {
@@ -156,11 +277,165 @@ export default function CskhAppointmentsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, filterStatus]);
+
+  useEffect(() => {
+    if (activeQueue !== 'change-requests') return;
+
+    let isActive = true;
+    let refreshTimeout: ReturnType<typeof setTimeout>;
+
+    const loadChangeRequests = async () => {
+      await fetchChangeRequests(changeRequestStatus, changeRequestPage);
+      if (isActive) {
+        refreshTimeout = setTimeout(loadChangeRequests, 15000);
+      }
+    };
+
+    void loadChangeRequests();
+    return () => {
+      isActive = false;
+      clearTimeout(refreshTimeout);
+    };
+  }, [activeQueue, changeRequestStatus, changeRequestPage, fetchChangeRequests]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchData();
+    if (activeQueue === 'change-requests') {
+      fetchChangeRequests(changeRequestStatus, changeRequestPage);
+    } else {
+      fetchData();
+    }
+  };
+
+  const openReviewModal = (
+    request: AppointmentChangeRequest,
+    decision: ChangeRequestDecision
+  ) => {
+    setReviewRequest(request);
+    setReviewDecision(decision);
+    setReviewNote('');
+    setReplacementDoctorId('');
+  };
+
+  const handleReviewChangeRequest = async () => {
+    if (!reviewRequest) return;
+    const patientChoice = reviewRequest.patientChoice || reviewRequest.patient_choice;
+    if (
+      reviewDecision === 'approved' &&
+      patientChoice === 'change_doctor' &&
+      (!hasLoadedActiveDoctors || !replacementDoctorId)
+    ) {
+      Alert.alert(
+        'Chưa chọn bác sĩ',
+        hasLoadedActiveDoctors
+          ? 'Vui lòng chọn bác sĩ thay thế trước khi duyệt.'
+          : 'Không tải được danh sách bác sĩ đang hoạt động. Tải lại màn hình rồi thử lại.'
+      );
+      return;
+    }
+    if (
+      reviewDecision === 'approved' &&
+      patientChoice === 'reschedule' &&
+      !(reviewRequest.requestedScheduledAt || reviewRequest.requested_scheduled_at)
+    ) {
+      Alert.alert(
+        'Thiếu giờ hẹn mới',
+        'Bệnh nhân chưa cung cấp giờ hẹn mới. Vui lòng liên hệ bệnh nhân trước khi duyệt.'
+      );
+      return;
+    }
+
+    try {
+      setActionLoadingId(reviewRequest.id);
+      await api.patch(
+        `/appointments/change-requests/${reviewRequest.id}/review`,
+        {
+          decision: reviewDecision,
+          reviewNote: reviewNote.trim(),
+          ...(reviewDecision === 'approved' &&
+          patientChoice === 'change_doctor' &&
+          replacementDoctorId
+            ? { assignedStaffId: replacementDoctorId }
+            : {}),
+        }
+      );
+      setReviewRequest(null);
+      setReplacementDoctorId('');
+      Alert.alert(
+        reviewDecision === 'approved' ? 'Đã duyệt yêu cầu' : 'Đã từ chối yêu cầu',
+        reviewDecision === 'approved'
+          ? 'Yêu cầu đã được duyệt và bệnh nhân sẽ nhận thông báo kết quả.'
+          : 'Yêu cầu đã bị từ chối và bệnh nhân sẽ nhận thông báo kết quả.'
+      );
+      if (changeRequestStatus === 'pending') {
+        setChangeRequests((prev) => prev.filter((item) => item.id !== reviewRequest.id));
+        if (changeRequests.length === 1 && changeRequestPage > 1) {
+          setChangeRequestPage((page) => page - 1);
+        } else {
+          fetchChangeRequests(changeRequestStatus, changeRequestPage);
+        }
+      } else {
+        fetchChangeRequests(changeRequestStatus, changeRequestPage);
+      }
+    } catch (err: any) {
+      Alert.alert(
+        'Không xử lý được yêu cầu',
+        err.response?.data?.message || 'Vui lòng thử lại. Có thể lịch bị trùng với ca khám khác.'
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleNotifyPatient = async (request: AppointmentChangeRequest) => {
+    try {
+      setActionLoadingId(request.id);
+      await api.post(
+        `/appointments/change-requests/${request.id}/notify-patient`
+      );
+      Alert.alert(
+        'Đã thông báo bệnh nhân',
+        'Yêu cầu được chuyển sang chờ bệnh nhân chọn phương án.'
+      );
+      await fetchChangeRequests(changeRequestStatus, changeRequestPage);
+    } catch (err: any) {
+      Alert.alert(
+        'Không gửi được thông báo',
+        err.response?.data?.message || 'Vui lòng thử lại.'
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const getRequestAppointment = (request: AppointmentChangeRequest) =>
+    request.appointment ||
+    request.appointments ||
+    request.appointments_appointment_idToappointments ||
+    request.appointments_change_requests_appointment_idToappointments;
+
+  const getRequestAction = (request: AppointmentChangeRequest) =>
+    request.action || request.appointment_change_action || 'cancel';
+
+  const getRequestStatus = (request: AppointmentChangeRequest) =>
+    request.status || request.appointment_change_request_status || 'pending';
+
+  const isDoctorInitiatedRequest = (request: AppointmentChangeRequest) =>
+    (request.initiatedByRole || request.initiated_by_role)?.toLowerCase() === 'doctor';
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return 'Không có thông tin';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Không có thông tin';
+    return `${date.toLocaleDateString('vi-VN')} lúc ${date.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
   };
 
   const openAssignModal = (item: AppointmentItem) => {
@@ -244,10 +519,10 @@ export default function CskhAppointmentsScreen() {
     );
   };
 
-  const filtered = appointments.filter((item) => {
+  const filtered = sortAppointmentsByStatusAndDate(appointments.filter((item) => {
     if (filterStatus === 'all') return true;
     return item.status === filterStatus;
-  });
+  }));
 
   const pendingCount = appointments.filter((a) => a.status === 'pending').length;
   const confirmedCount = appointments.filter((a) => a.status === 'confirmed').length;
@@ -262,7 +537,7 @@ export default function CskhAppointmentsScreen() {
         </View>
         <Text style={styles.cskhTitle}>Xác Nhận & Điều Phối Lịch Phòng Khám</Text>
         <Text style={styles.cskhSub}>
-          Tiếp nhận ca khám mới, gọi điện xác nhận & phân công phòng khám, bác sĩ phụ trách.
+          Tiếp nhận lịch khám mới và xử lý yêu cầu đổi hoặc hủy lịch từ bệnh nhân.
         </Text>
 
         {/* Mini stats */}
@@ -278,6 +553,42 @@ export default function CskhAppointmentsScreen() {
         </View>
       </View>
 
+      <View style={styles.queueSwitcher}>
+        {([
+          { key: 'appointments', label: 'Điều phối lịch khám' },
+          { key: 'change-requests', label: 'Yêu cầu đổi/hủy' },
+        ] as const).map((tab) => (
+          <TouchableOpacity
+            key={tab.key}
+            style={[styles.queueTab, activeQueue === tab.key && styles.queueTabActive]}
+            onPress={() => setActiveQueue(tab.key)}
+          >
+            <Text style={[styles.queueTabText, activeQueue === tab.key && styles.queueTabTextActive]}>
+              {tab.label}
+              {tab.key === 'change-requests'
+                ? ` (${pendingChangeRequestCount})`
+                : ''}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        {activeQueue === 'change-requests' && (
+          <TouchableOpacity
+            style={styles.queueRefreshButton}
+            onPress={() => fetchChangeRequests(changeRequestStatus, changeRequestPage)}
+            disabled={isLoadingChangeRequests}
+            accessibilityLabel="Tải lại yêu cầu đổi hủy"
+          >
+            {isLoadingChangeRequests ? (
+              <ActivityIndicator size="small" color="#EA580C" />
+            ) : (
+              <Ionicons name="refresh" size={18} color="#EA580C" />
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {activeQueue === 'appointments' ? (
+        <>
       {/* Filter Tabs */}
       <View style={styles.filterBar}>
         {[
@@ -436,6 +747,261 @@ export default function CskhAppointmentsScreen() {
           }}
         />
       )}
+        </>
+      ) : (
+        <>
+          <View style={styles.changeRequestFilterBar}>
+            {([
+              ['pending', 'Chờ xử lý'],
+              ['awaiting_patient', 'Chờ bệnh nhân'],
+              ['approved', 'Đã duyệt'],
+              ['rejected', 'Đã từ chối'],
+            ] as const).map(([status, label]) => (
+              <TouchableOpacity
+                key={status}
+                style={[
+                  styles.filterTab,
+                  changeRequestStatus === status && styles.filterTabActive,
+                ]}
+                onPress={() => {
+                  setChangeRequestStatus(status);
+                  setChangeRequestPage(1);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.filterTabText,
+                    changeRequestStatus === status && styles.filterTabTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {isLoadingChangeRequests ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#EA5800" />
+              <Text style={styles.loadingText}>Đang tải yêu cầu đổi/hủy lịch...</Text>
+            </View>
+          ) : changeRequestError ? (
+            <View style={styles.center}>
+              <Ionicons name="alert-circle-outline" size={48} color="#DC2626" />
+              <Text style={styles.emptyTitle}>Không tải được yêu cầu</Text>
+              <Text style={styles.emptySub}>{changeRequestError}</Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => fetchChangeRequests(changeRequestStatus, changeRequestPage)}
+              >
+                <Text style={styles.retryButtonText}>Thử lại</Text>
+              </TouchableOpacity>
+            </View>
+          ) : changeRequests.length === 0 ? (
+            <View style={styles.center}>
+              <Ionicons name="checkmark-done-circle-outline" size={56} color="#94A3B8" />
+              <Text style={styles.emptyTitle}>Không có yêu cầu nào</Text>
+              <Text style={styles.emptySub}>
+                {changeRequestStatus === 'pending'
+                  ? `Hiện không có yêu cầu đổi/hủy đang chờ xử lý cho tài khoản ${user?.fullName || 'CSKH này'}. Nhấn nút làm mới để kiểm tra lại.`
+                  : 'Không tìm thấy yêu cầu trong trạng thái này.'}
+              </Text>
+            </View>
+          ) : (
+            <>
+              <FlatList
+                data={changeRequests}
+                keyExtractor={(item) => item.id}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                contentContainerStyle={styles.listContent}
+                renderItem={({ item }) => {
+                  const appointment = getRequestAppointment(item);
+                  const patient =
+                    item.patient ||
+                    item.patients ||
+                    item.patients_change_requests_patient_idTopatients ||
+                    appointment?.patients ||
+                    appointment?.patient;
+                  const isProcessing = actionLoadingId === item.id;
+                  const action = getRequestAction(item);
+                  const status = getRequestStatus(item);
+                  const requestActionLabel = isDoctorInitiatedRequest(item)
+                    ? action === 'reschedule'
+                      ? 'Bác sĩ yêu cầu đổi lịch'
+                      : 'Bác sĩ yêu cầu hủy lịch'
+                    : action === 'reschedule'
+                      ? 'Yêu cầu đổi ngày/giờ'
+                      : 'Yêu cầu hủy lịch';
+                  const patientChoice = item.patientChoice || item.patient_choice;
+                  const requestedAt = item.requestedScheduledAt || item.requested_scheduled_at;
+                  const appointmentId = item.appointmentId || item.appointment_id || appointment?.id;
+
+                  return (
+                    <View style={styles.card}>
+                      <View style={styles.cardHeader}>
+                        <View style={styles.changeRequestTypeBadge}>
+                          <Text style={styles.changeRequestTypeText}>{requestActionLabel}</Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.changeRequestStatusBadge,
+                            status === 'approved'
+                              ? styles.changeRequestApproved
+                              : status === 'rejected'
+                                ? styles.changeRequestRejected
+                                : styles.changeRequestPending,
+                          ]}
+                        >
+                          <Text style={styles.changeRequestStatusText}>
+                            {status === 'approved'
+                              ? 'Đã duyệt'
+                              : status === 'rejected'
+                                ? 'Đã từ chối'
+                                : status === 'awaiting_patient'
+                                  ? 'Chờ bệnh nhân chọn'
+                                : 'Chờ xử lý'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.changeRequestPatient}>
+                        {patient?.full_name || 'Bệnh nhân'}
+                      </Text>
+                      <Text style={styles.changeRequestMeta}>
+                        Mã lịch hẹn: {appointmentId || 'Không có thông tin'}
+                      </Text>
+                      {patient?.phone ? (
+                        <View style={styles.phoneActionRow}>
+                          <Ionicons name="call-outline" size={14} color="#0284C7" />
+                          <Text style={styles.phoneText}>{patient.phone}</Text>
+                          <TouchableOpacity
+                            style={styles.callNowBtn}
+                            onPress={() => Linking.openURL(`tel:${patient.phone}`)}
+                          >
+                            <Ionicons name="call" size={12} color="#FFFFFF" />
+                            <Text style={styles.callNowBtnText}>Gọi bệnh nhân</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+
+                      <View style={styles.requestDetailBox}>
+                        <Text style={styles.requestDetailText}>
+                          Lịch hiện tại:{' '}
+                          {formatDateTime(
+                            appointment?.scheduled_at ||
+                              item.currentScheduledAt ||
+                              item.current_scheduled_at
+                          )}
+                        </Text>
+                        {(action === 'reschedule' || patientChoice === 'reschedule') && (
+                          <Text style={styles.requestDetailText}>
+                            Thời gian đề xuất: {formatDateTime(requestedAt)}
+                          </Text>
+                        )}
+                        <Text style={styles.requestDetailText}>
+                          Lý do: {item.reason?.trim() || 'Không ghi lý do'}
+                        </Text>
+                        {patientChoice && (
+                          <Text style={styles.requestDetailText}>
+                            Bệnh nhân chọn:{' '}
+                            {patientChoice === 'reschedule' ? 'Đổi ngày/giờ' : 'Đổi bác sĩ'}
+                          </Text>
+                        )}
+                        {item.reviewNote || item.review_note ? (
+                          <Text style={styles.requestReviewNote}>
+                            Ghi chú xử lý: {item.reviewNote || item.review_note}
+                          </Text>
+                        ) : null}
+                        {item.reviewedAt || item.reviewed_at ? (
+                          <Text style={styles.changeRequestMeta}>
+                            Đã xử lý: {formatDateTime(item.reviewedAt || item.reviewed_at)}
+                          </Text>
+                        ) : null}
+                        {item.reviewer?.full_name || item.reviewedBy || item.reviewed_by ? (
+                          <Text style={styles.changeRequestMeta}>
+                            Người xử lý: {item.reviewer?.full_name || item.reviewedBy || item.reviewed_by}
+                          </Text>
+                        ) : null}
+                      </View>
+
+                      {status === 'pending' &&
+                        isDoctorInitiatedRequest(item) &&
+                        !patientChoice && (
+                          <TouchableOpacity
+                            style={styles.notifyPatientBtn}
+                            disabled={isProcessing}
+                            onPress={() => handleNotifyPatient(item)}
+                          >
+                            {isProcessing ? (
+                              <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                              <>
+                                <Ionicons name="notifications-outline" size={16} color="#FFFFFF" />
+                                <Text style={styles.assignBtnText}>Thông báo bệnh nhân chọn phương án</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                        )}
+
+                      {status === 'pending' &&
+                        (!isDoctorInitiatedRequest(item) || !!patientChoice) && (
+                        <View style={styles.actionGroup}>
+                          <TouchableOpacity
+                            style={styles.reviewApproveBtn}
+                            disabled={isProcessing}
+                            onPress={() => openReviewModal(item, 'approved')}
+                          >
+                            {isProcessing ? (
+                              <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                              <>
+                                <Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />
+                                <Text style={styles.assignBtnText}>Duyệt yêu cầu</Text>
+                              </>
+                            )}
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.reviewRejectBtn}
+                            disabled={isProcessing}
+                            onPress={() => openReviewModal(item, 'rejected')}
+                          >
+                            <Ionicons name="close-circle" size={16} color="#B91C1C" />
+                            <Text style={styles.reviewRejectText}>Từ chối</Text>
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+                  );
+                }}
+              />
+              <View style={styles.pagination}>
+                <TouchableOpacity
+                  style={[styles.pageButton, changeRequestPage <= 1 && styles.pageButtonDisabled]}
+                  disabled={changeRequestPage <= 1}
+                  onPress={() => setChangeRequestPage((page) => Math.max(1, page - 1))}
+                >
+                  <Text style={styles.pageButtonText}>Trước</Text>
+                </TouchableOpacity>
+                <Text style={styles.pageLabel}>
+                  Trang {changeRequestPage}/{changeRequestTotalPages}
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.pageButton,
+                    changeRequestPage >= changeRequestTotalPages && styles.pageButtonDisabled,
+                  ]}
+                  disabled={changeRequestPage >= changeRequestTotalPages}
+                  onPress={() =>
+                    setChangeRequestPage((page) => Math.min(changeRequestTotalPages, page + 1))
+                  }
+                >
+                  <Text style={styles.pageButtonText}>Sau</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </>
+      )}
 
       {/* MODAL: CHỌN BÁC SĨ PHỤ TRÁCH */}
       <Modal
@@ -484,6 +1050,116 @@ export default function CskhAppointmentsScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={reviewRequest !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewRequest(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reviewModal}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={styles.modalTitle}>
+                  {reviewDecision === 'approved' ? 'Duyệt yêu cầu' : 'Từ chối yêu cầu'}
+                </Text>
+                <Text style={styles.modalSub}>
+                  {reviewRequest && getRequestAction(reviewRequest) === 'reschedule'
+                    ? 'Đánh giá lý do và ngày/giờ đề xuất trước khi quyết định.'
+                    : 'Đánh giá lý do bệnh nhân đưa ra trước khi quyết định.'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setReviewRequest(null)}>
+                <Ionicons name="close" size={24} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+            {reviewRequest && (
+              <View style={styles.reviewRequestSummary}>
+                <Text style={styles.reviewSummaryText}>
+                  Lịch hiện tại: {formatDateTime(getRequestAppointment(reviewRequest)?.scheduled_at)}
+                </Text>
+                {(reviewRequest.patientChoice || reviewRequest.patient_choice) === 'reschedule' && (
+                  <Text style={styles.reviewSummaryText}>
+                    Thời gian đề xuất:{' '}
+                    {formatDateTime(
+                      reviewRequest.requestedScheduledAt || reviewRequest.requested_scheduled_at
+                    )}
+                  </Text>
+                )}
+                <Text style={styles.reviewSummaryReason}>
+                  Lý do: {reviewRequest.reason?.trim() || 'Không ghi lý do'}
+                </Text>
+                {(reviewRequest.patientChoice || reviewRequest.patient_choice) ===
+                  'change_doctor' &&
+                  reviewDecision === 'approved' && (
+                    <>
+                      <Text style={styles.doctorListHeader}>Chọn bác sĩ thay thế</Text>
+                      {hasLoadedActiveDoctors && doctors.map((doctor) => (
+                        <TouchableOpacity
+                          key={doctor.id}
+                          style={[
+                            styles.replacementDoctorOption,
+                            replacementDoctorId === doctor.id && styles.replacementDoctorSelected,
+                          ]}
+                          onPress={() => setReplacementDoctorId(doctor.id)}
+                        >
+                          <Ionicons
+                            name={replacementDoctorId === doctor.id ? 'radio-button-on' : 'radio-button-off'}
+                            size={18}
+                            color={replacementDoctorId === doctor.id ? '#0D9488' : '#64748B'}
+                          />
+                          <Text style={styles.replacementDoctorText}>{doctor.full_name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                      {(!hasLoadedActiveDoctors || doctors.length === 0) && (
+                        <Text style={styles.reviewSummaryReason}>
+                          Không tải được danh sách bác sĩ đang hoạt động. Vui lòng tải lại màn hình.
+                        </Text>
+                      )}
+                    </>
+                  )}
+              </View>
+            )}
+            <Text style={styles.reviewNoteLabel}>Ghi chú xử lý (không bắt buộc)</Text>
+            <TextInput
+              style={styles.reviewNoteInput}
+              value={reviewNote}
+              onChangeText={setReviewNote}
+              placeholder="Nhập ghi chú gửi bệnh nhân"
+              placeholderTextColor="#94A3B8"
+              multiline
+              textAlignVertical="top"
+              maxLength={500}
+            />
+            <View style={styles.reviewModalActions}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setReviewRequest(null)}
+                disabled={actionLoadingId === reviewRequest?.id}
+              >
+                <Text style={styles.modalCancelButtonText}>Quay lại</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.reviewConfirmButton,
+                  reviewDecision === 'rejected' && styles.reviewConfirmReject,
+                ]}
+                onPress={handleReviewChangeRequest}
+                disabled={actionLoadingId === reviewRequest?.id}
+              >
+                {actionLoadingId === reviewRequest?.id ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.reviewConfirmButtonText}>
+                    {reviewDecision === 'approved' ? 'Xác nhận duyệt' : 'Xác nhận từ chối'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -525,6 +1201,45 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 2,
   },
+  queueSwitcher: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  queueTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  queueTabActive: {
+    backgroundColor: '#EA580C',
+  },
+  queueTabText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  queueTabTextActive: {
+    color: '#FFFFFF',
+  },
+  queueRefreshButton: {
+    width: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
   statsRow: {
     flexDirection: 'row',
     gap: 12,
@@ -551,6 +1266,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  changeRequestFilterBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
     borderBottomWidth: 1,
@@ -720,6 +1445,161 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
   },
+  changeRequestTypeBadge: {
+    backgroundColor: '#FFF7ED',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  changeRequestTypeText: {
+    color: '#C2410C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  changeRequestStatusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  changeRequestPending: {
+    backgroundColor: '#FEF3C7',
+  },
+  changeRequestApproved: {
+    backgroundColor: '#DCFCE7',
+  },
+  changeRequestRejected: {
+    backgroundColor: '#FEE2E2',
+  },
+  changeRequestStatusText: {
+    color: '#334155',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  changeRequestPatient: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  changeRequestMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 3,
+  },
+  requestDetailBox: {
+    gap: 6,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    borderLeftWidth: 3,
+    borderLeftColor: '#EA580C',
+  },
+  requestDetailText: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  requestReviewNote: {
+    color: '#166534',
+    fontSize: 13,
+    lineHeight: 19,
+    fontStyle: 'italic',
+  },
+  reviewApproveBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#16A34A',
+  },
+  notifyPatientBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 12,
+    marginTop: 12,
+    borderRadius: 10,
+    backgroundColor: '#0284C7',
+  },
+  replacementDoctorOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+  },
+  replacementDoctorSelected: {
+    borderColor: '#0D9488',
+    backgroundColor: '#F0FDFA',
+  },
+  replacementDoctorText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reviewRejectBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+  },
+  reviewRejectText: {
+    color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pagination: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  pageButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FFEDD5',
+  },
+  pageButtonDisabled: {
+    opacity: 0.45,
+  },
+  pageButtonText: {
+    color: '#C2410C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pageLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  retryButton: {
+    backgroundColor: '#EA580C',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginTop: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
   assignBtn: {
     flex: 2,
     flexDirection: 'row',
@@ -785,6 +1665,84 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: '75%',
+  },
+  reviewModal: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 32,
+  },
+  reviewNoteLabel: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  reviewRequestSummary: {
+    gap: 6,
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#FFF7ED',
+    borderLeftWidth: 3,
+    borderLeftColor: '#EA580C',
+  },
+  reviewSummaryText: {
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  reviewSummaryReason: {
+    color: '#7C2D12',
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+  },
+  reviewNoteInput: {
+    minHeight: 96,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    color: '#0F172A',
+    fontSize: 14,
+  },
+  reviewModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  modalCancelButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#F1F5F9',
+  },
+  modalCancelButtonText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  reviewConfirmButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#16A34A',
+  },
+  reviewConfirmReject: {
+    backgroundColor: '#DC2626',
+  },
+  reviewConfirmButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   modalHeader: {
     flexDirection: 'row',

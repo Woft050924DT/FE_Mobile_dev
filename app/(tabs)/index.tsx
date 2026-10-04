@@ -10,6 +10,8 @@ import {
   Linking,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -17,6 +19,11 @@ import { MedicalColors } from '../../constants/Colors';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 import { AppointmentStatusBadge } from '../../components/AppointmentStatusBadge';
+import {
+  canRequestAppointmentChange,
+  getAppointmentStartBlockMessage,
+} from '../../utils/appointment-timing';
+import { sortAppointmentsByStatusAndDate } from '../../utils/appointment-order';
 import { PatientProfileModal } from '../../components/PatientProfileModal';
 
 export default function HomeScreen() {
@@ -29,6 +36,10 @@ export default function HomeScreen() {
   const [doctorRefreshing, setDoctorRefreshing] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [filterTab, setFilterTab] = useState<'all' | 'unexamined' | 'examined'>('all');
+  const [changeRequestAppointment, setChangeRequestAppointment] = useState<any | null>(null);
+  const [changeRequestAction, setChangeRequestAction] = useState<'reschedule' | 'cancel'>('reschedule');
+  const [changeRequestReason, setChangeRequestReason] = useState('');
+  const [submittedChangeRequestIds, setSubmittedChangeRequestIds] = useState<string[]>([]);
 
   // ================= STATE DÀNH CHO CSKH =================
   const [cskhPendingCount, setCskhPendingCount] = useState(0);
@@ -161,8 +172,17 @@ export default function HomeScreen() {
   const handleDoctorUpdateStatus = async (
     appointmentId: string,
     newStatus: 'in_progress' | 'completed',
-    statusLabel: string
+    statusLabel: string,
+    scheduledAt?: string
   ) => {
+    if (newStatus === 'in_progress') {
+      const blockMessage = getAppointmentStartBlockMessage(scheduledAt);
+      if (blockMessage) {
+        Alert.alert('Chưa thể bắt đầu khám', blockMessage);
+        return;
+      }
+    }
+
     try {
       setActionLoadingId(appointmentId);
       await api.patch(`/appointments/${appointmentId}/status`, { status: newStatus });
@@ -173,6 +193,43 @@ export default function HomeScreen() {
     } catch {
       setDoctorAppointments((prev) =>
         prev.map((item) => (item.id === appointmentId ? { ...item, status: newStatus } : item))
+      );
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const openChangeRequest = (appointment: any, action: 'reschedule' | 'cancel') => {
+    setChangeRequestAppointment(appointment);
+    setChangeRequestAction(action);
+    setChangeRequestReason('');
+  };
+
+  const submitDoctorChangeRequest = async () => {
+    if (!changeRequestAppointment || !changeRequestReason.trim()) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập lý do yêu cầu để gửi CSKH.');
+      return;
+    }
+
+    try {
+      setActionLoadingId(changeRequestAppointment.id);
+      await api.post(
+        `/appointments/${changeRequestAppointment.id}/doctor-change-request`,
+        { action: changeRequestAction, reason: changeRequestReason.trim() }
+      );
+      setSubmittedChangeRequestIds((ids) =>
+        ids.includes(changeRequestAppointment.id) ? ids : [...ids, changeRequestAppointment.id]
+      );
+      setChangeRequestAppointment(null);
+      setChangeRequestReason('');
+      Alert.alert(
+        'Đã gửi yêu cầu cho CSKH',
+        'Lịch hẹn chưa thay đổi. CSKH sẽ liên hệ bệnh nhân và xử lý yêu cầu.'
+      );
+    } catch (err: any) {
+      Alert.alert(
+        'Không gửi được yêu cầu',
+        err.response?.data?.message || 'Vui lòng thử lại sau.'
       );
     } finally {
       setActionLoadingId(null);
@@ -193,7 +250,7 @@ export default function HomeScreen() {
     day: 'numeric',
   });
 
-  const filteredDoctorAppointments = doctorAppointments.filter((item) => {
+  const filteredDoctorAppointments = sortAppointmentsByStatusAndDate(doctorAppointments.filter((item) => {
     if (filterTab === 'unexamined') {
       return item.status === 'confirmed' || item.status === 'in_progress' || item.status === 'pending';
     }
@@ -201,7 +258,7 @@ export default function HomeScreen() {
       return item.status === 'completed';
     }
     return true;
-  });
+  }));
 
   // ==============================================================
   // 1. GIAO DIỆN TRỰC TIẾP CHO BÁC SĨ (KHI ĐĂNG NHẬP LÀ DOCTOR)
@@ -374,6 +431,7 @@ export default function HomeScreen() {
           ) : (
             filteredDoctorAppointments.map((apt) => {
               const isProcessing = actionLoadingId === apt.id;
+              const canRequestChange = canRequestAppointmentChange(apt.status, apt.scheduled_at);
               const patientName = apt.patients?.full_name || 'Bệnh nhân';
               const patientPhone = apt.patients?.phone || '0901234567';
 
@@ -459,7 +517,12 @@ export default function HomeScreen() {
                         style={styles.startTripBtn}
                         disabled={isProcessing}
                         onPress={() =>
-                          handleDoctorUpdateStatus(apt.id, 'in_progress', 'Đang di chuyển đến khám')
+                          handleDoctorUpdateStatus(
+                            apt.id,
+                            'in_progress',
+                            'Đang di chuyển đến khám',
+                            apt.scheduled_at
+                          )
                         }
                       >
                         <Ionicons name="navigate" size={15} color="#FFFFFF" />
@@ -502,11 +565,126 @@ export default function HomeScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+
+                  {(apt.status === 'pending' || apt.status === 'confirmed') && (
+                    <View style={styles.changeRequestSection}>
+                      {submittedChangeRequestIds.includes(apt.id) ? (
+                        <Text style={styles.changeRequestPendingText}>
+                          Đã gửi yêu cầu cho CSKH, đang chờ xử lý
+                        </Text>
+                      ) : (
+                        <>
+                          <Text style={styles.changeRequestHint}>
+                            Cần đổi hoặc hủy lịch? Gửi yêu cầu để CSKH trao đổi với bệnh nhân.
+                          </Text>
+                          <View style={styles.changeRequestActions}>
+                            <TouchableOpacity
+                              style={[
+                                styles.changeRequestBtn,
+                                !canRequestChange && styles.changeRequestBtnDisabled,
+                              ]}
+                              disabled={!canRequestChange || isProcessing}
+                              onPress={() => openChangeRequest(apt, 'reschedule')}
+                            >
+                              <Ionicons
+                                name="calendar-outline"
+                                size={16}
+                                color={canRequestChange ? '#0369A1' : '#94A3B8'}
+                              />
+                              <Text
+                                style={[
+                                  styles.changeRequestBtnText,
+                                  !canRequestChange && styles.changeRequestBtnTextDisabled,
+                                ]}
+                              >
+                                Yêu cầu đổi lịch
+                              </Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.changeRequestBtn,
+                                styles.changeRequestCancelBtn,
+                                !canRequestChange && styles.changeRequestBtnDisabled,
+                              ]}
+                              disabled={!canRequestChange || isProcessing}
+                              onPress={() => openChangeRequest(apt, 'cancel')}
+                            >
+                              <Ionicons
+                                name="close-circle-outline"
+                                size={16}
+                                color={canRequestChange ? '#B91C1C' : '#94A3B8'}
+                              />
+                              <Text
+                                style={[
+                                  styles.changeRequestBtnText,
+                                  styles.changeRequestCancelText,
+                                  !canRequestChange && styles.changeRequestBtnTextDisabled,
+                                ]}
+                              >
+                                Yêu cầu hủy lịch
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                          {!canRequestChange && (
+                            <Text style={styles.changeRequestUnavailableText}>
+                              Chỉ gửi được yêu cầu khi lịch chưa bắt đầu và còn trước giờ hẹn.
+                            </Text>
+                          )}
+                        </>
+                      )}
+                    </View>
+                  )}
                 </View>
               );
             })
           )}
         </ScrollView>
+        <Modal
+          visible={!!changeRequestAppointment}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setChangeRequestAppointment(null)}
+        >
+          <View style={styles.changeRequestModalBackdrop}>
+            <View style={styles.changeRequestModal}>
+              <Text style={styles.changeRequestModalTitle}>
+                {changeRequestAction === 'reschedule' ? 'Yêu cầu đổi lịch hẹn' : 'Yêu cầu hủy lịch hẹn'}
+              </Text>
+              <Text style={styles.changeRequestModalText}>
+                Lịch hẹn không thay đổi ngay. CSKH sẽ trao đổi với bệnh nhân và xác nhận phương án.
+              </Text>
+              <TextInput
+                style={styles.changeRequestReasonInput}
+                value={changeRequestReason}
+                onChangeText={setChangeRequestReason}
+                placeholder="Nhập lý do gửi CSKH..."
+                multiline
+                textAlignVertical="top"
+                maxLength={500}
+              />
+              <View style={styles.changeRequestModalActions}>
+                <TouchableOpacity
+                  style={styles.changeRequestDismissBtn}
+                  disabled={actionLoadingId === changeRequestAppointment?.id}
+                  onPress={() => setChangeRequestAppointment(null)}
+                >
+                  <Text style={styles.changeRequestDismissText}>Đóng</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.changeRequestSubmitBtn}
+                  disabled={actionLoadingId === changeRequestAppointment?.id}
+                  onPress={submitDoctorChangeRequest}
+                >
+                  {actionLoadingId === changeRequestAppointment?.id ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.changeRequestSubmitText}>Gửi cho CSKH</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -1357,6 +1535,126 @@ const styles = StyleSheet.create({
   },
   viewResultBtnText: {
     fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  changeRequestSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  changeRequestHint: {
+    fontSize: 12,
+    color: '#475569',
+    marginBottom: 8,
+  },
+  changeRequestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  changeRequestBtn: {
+    flex: 1,
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 9,
+    backgroundColor: '#F0F9FF',
+  },
+  changeRequestCancelBtn: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  changeRequestBtnDisabled: {
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
+  },
+  changeRequestBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0369A1',
+  },
+  changeRequestCancelText: {
+    color: '#B91C1C',
+  },
+  changeRequestBtnTextDisabled: {
+    color: '#94A3B8',
+  },
+  changeRequestUnavailableText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#64748B',
+  },
+  changeRequestPendingText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0F766E',
+  },
+  changeRequestModalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+  },
+  changeRequestModal: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+  },
+  changeRequestModalTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  changeRequestModalText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#475569',
+  },
+  changeRequestReasonInput: {
+    minHeight: 100,
+    marginTop: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    color: '#0F172A',
+  },
+  changeRequestModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 16,
+  },
+  changeRequestDismissBtn: {
+    minWidth: 84,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 9,
+    backgroundColor: '#F1F5F9',
+  },
+  changeRequestDismissText: {
+    fontWeight: '700',
+    color: '#475569',
+  },
+  changeRequestSubmitBtn: {
+    minWidth: 132,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 9,
+    backgroundColor: '#0D9488',
+  },
+  changeRequestSubmitText: {
     fontWeight: '700',
     color: '#FFFFFF',
   },
