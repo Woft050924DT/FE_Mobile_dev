@@ -109,8 +109,10 @@ export default function CskhAppointmentsScreen() {
   const { user, token } = useAuth();
 
   const [appointments, setAppointments] = useState<AppointmentItem[]>([]);
+  const [assignedPatientCount, setAssignedPatientCount] = useState(0);
+  const [appointmentsError, setAppointmentsError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('pending');
-  const [activeQueue, setActiveQueue] = useState<'appointments' | 'change-requests'>('change-requests');
+  const [activeQueue, setActiveQueue] = useState<'appointments' | 'change-requests'>('appointments');
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [changeRequests, setChangeRequests] = useState<AppointmentChangeRequest[]>([]);
@@ -188,100 +190,171 @@ export default function CskhAppointmentsScreen() {
   }, []);
 
   const fetchData = useCallback(async () => {
+    setIsLoading(true);
+    setAppointmentsError(null);
+    setAssignedPatientCount(0);
     try {
-      setIsLoading(true);
-      const [aptRes, docRes] = await Promise.all([
-        api.get('/appointments'),
-        api.get('/users?roleCode=doctor&status=active'),
-      ]);
+      if (!user?.id) {
+        throw new Error('Không xác định được tài khoản CSKH đang đăng nhập.');
+      }
 
-      const items =
-        aptRes.data?.data?.data ||
-        aptRes.data?.data?.items ||
-        (Array.isArray(aptRes.data?.data) ? aptRes.data?.data : []);
-      setAppointments(items);
+      const assignmentPageSize = 100;
+      const patientIds = new Set<string>();
+      let assignmentPage = 1;
+      while (true) {
+        const assignmentRes = await api.get('/cskh/assignments', {
+          params: {
+            staffId: user.id,
+            isActive: true,
+            page: assignmentPage,
+            limit: assignmentPageSize,
+          },
+        });
+        const assignmentPayload = assignmentRes.data?.data ?? assignmentRes.data;
+        const assignmentCandidates = [
+          assignmentPayload,
+          assignmentPayload?.items,
+          assignmentPayload?.data,
+          assignmentPayload?.data?.items,
+        ];
+        const assignments = assignmentCandidates.find(Array.isArray);
+        if (!assignments) {
+          throw new Error('API trả về danh sách phân công CSKH không đúng định dạng.');
+        }
+        for (const assignment of assignments) {
+          const patientId = assignment.patient_id || assignment.patients?.id;
+          if (patientId) patientIds.add(patientId);
+        }
+        const assignmentMeta =
+          assignmentPayload?.meta ||
+          assignmentPayload?.pagination ||
+          assignmentRes.data?.meta;
+        const totalPages = Number(
+          assignmentMeta?.totalPages ?? assignmentMeta?.total_pages
+        );
+        if (Number.isFinite(totalPages) && totalPages > 0) {
+          if (assignmentPage >= totalPages) break;
+        } else if (
+          assignmentMeta?.hasNextPage === false ||
+          assignments.length < assignmentPageSize
+        ) {
+          break;
+        }
+        if (assignments.length === 0) break;
+        assignmentPage += 1;
+      }
+      setAssignedPatientCount(patientIds.size);
 
-      const docs = docRes.data?.data?.items || docRes.data?.data || [];
-      setDoctors(docs);
-      setHasLoadedActiveDoctors(Array.isArray(docs));
+      if (patientIds.size === 0) {
+        setAppointments([]);
+      } else {
+        const pageSize = 100;
+        const allItems: AppointmentItem[] = [];
+        const seenIds = new Set<string>();
+        let page = 1;
+
+        while (true) {
+          const aptRes = await api.get('/appointments', {
+            params: { page, limit: pageSize },
+          });
+          const payload = aptRes.data?.data ?? aptRes.data;
+          const candidates = [
+            payload,
+            payload?.data,
+            payload?.items,
+            payload?.results,
+            payload?.data?.items,
+            payload?.data?.results,
+          ];
+          const items = candidates.find(Array.isArray);
+          if (!items) {
+            throw new Error('API trả về danh sách lịch hẹn không đúng định dạng.');
+          }
+
+          let addedCount = 0;
+          for (const item of items as AppointmentItem[]) {
+            if (item.id && seenIds.has(item.id)) continue;
+            if (item.id) seenIds.add(item.id);
+            allItems.push({
+              ...item,
+              status: String(item.status || '').toLowerCase(),
+            });
+            addedCount += 1;
+          }
+
+          const pagination =
+            payload?.meta ||
+            payload?.pagination ||
+            payload?.data?.meta ||
+            payload?.data?.pagination ||
+            aptRes.data?.meta ||
+            aptRes.data?.pagination;
+          const reportedTotalPages = Number(
+            pagination?.totalPages ??
+              pagination?.total_pages ??
+              pagination?.lastPage ??
+              pagination?.pages ??
+              pagination?.pageCount
+          );
+          const reportedTotal = Number(
+            pagination?.total ??
+              pagination?.totalItems ??
+              pagination?.totalCount ??
+              pagination?.count
+          );
+          const totalPages =
+            Number.isFinite(reportedTotalPages) && reportedTotalPages > 0
+              ? reportedTotalPages
+              : Number.isFinite(reportedTotal) && reportedTotal >= 0
+                ? Math.ceil(reportedTotal / pageSize)
+                : undefined;
+          if (
+            typeof totalPages === 'number' &&
+            Number.isFinite(totalPages) &&
+            totalPages > 0 &&
+            page >= totalPages
+          ) break;
+          if (!totalPages && items.length < pageSize) break;
+          if (addedCount === 0) {
+            throw new Error('API phân trang lịch hẹn bị lặp; chưa tải được đầy đủ danh sách.');
+          }
+          page += 1;
+        }
+        setAppointments(
+          allItems.filter((appointment) => {
+            const patientId = appointment.patient_id || appointment.patients?.id;
+            return !!patientId && patientIds.has(patientId);
+          })
+        );
+      }
+    } catch (err: any) {
+      setAppointments([]);
+      setAppointmentsError(
+        err.response?.data?.message || err.message || 'Không tải được danh sách lịch hẹn.'
+      );
+    }
+
+    try {
+      const docRes = await api.get('/users?roleCode=doctor&status=active');
+      const payload = docRes.data?.data ?? docRes.data;
+      const doctorsList = Array.isArray(payload) ? payload : payload?.items;
+      if (!Array.isArray(doctorsList)) {
+        throw new Error('API trả về danh sách bác sĩ không đúng định dạng.');
+      }
+      setDoctors(doctorsList);
+      setHasLoadedActiveDoctors(true);
     } catch {
+      setDoctors([]);
       setHasLoadedActiveDoctors(false);
-      // Mock data cho CSKH thử nghiệm
-      setAppointments([
-        {
-          id: 'apt-cskh-01',
-          type: 'first_visit',
-          status: 'pending',
-          scheduled_at: new Date(Date.now() + 3600000 * 3).toISOString(),
-          visit_address: 'Phòng 502, Tòa nhà Detech, Tôn Thất Thuyết, Cầu Giấy, Hà Nội',
-          note: 'Bệnh nhân sốt cao 39 độ, đau đầu và ho khan liên tục từ tối qua.',
-          patient_id: 'pat-001',
-          patients: {
-            id: 'pat-001',
-            full_name: 'Nguyễn Văn Bệnh Nhân',
-            phone: '0912345678',
-            address: 'Phòng 502, Tòa nhà Detech, Tôn Thất Thuyết, Cầu Giấy, Hà Nội',
-          },
-        },
-        {
-          id: 'apt-cskh-02',
-          type: 'first_visit',
-          status: 'pending',
-          scheduled_at: new Date(Date.now() + 86400000).toISOString(),
-          visit_address: '144 Xuân Thủy, Dịch Vọng Hậu, Cầu Giấy, Hà Nội',
-          note: 'Cần bác sĩ đến khám viêm họng hạt và tư vấn huyết áp định kỳ.',
-          patient_id: 'pat-002',
-          patients: {
-            id: 'pat-002',
-            full_name: 'Trần Thị Mai',
-            phone: '0988776655',
-            address: '144 Xuân Thủy, Dịch Vọng Hậu, Cầu Giấy, Hà Nội',
-          },
-        },
-        {
-          id: 'apt-cskh-03',
-          type: 'follow_up',
-          status: 'confirmed',
-          scheduled_at: new Date(Date.now() + 86400000 * 2).toISOString(),
-          visit_address: '12 Giải Phóng, Hai Bà Trưng, Hà Nội',
-          note: 'Tái khám sau đợt viêm phế quản',
-          patient_id: 'pat-003',
-          patients: {
-            id: 'pat-003',
-            full_name: 'Lê Văn Cường',
-            phone: '0933221100',
-          },
-          users_appointments_assigned_staff_idTousers: {
-            id: 'doc-001',
-            full_name: 'BS. CK1 Hoàng Minh Tâm',
-            phone: '0901234567',
-          },
-        },
-      ]);
-
-      setDoctors([
-        {
-          id: 'doc-001',
-          full_name: 'BS. CK1 Hoàng Minh Tâm',
-          phone: '0901234567',
-          email: 'doctor@hospital.local',
-        },
-        {
-          id: 'doc-002',
-          full_name: 'ThS. BS Trần Minh Đức',
-          phone: '0912334455',
-          email: 'duc.tm@hospital.local',
-        },
-      ]);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData, filterStatus]);
+  }, [fetchData]);
 
   useEffect(() => {
     if (activeQueue !== 'change-requests') return;
@@ -452,7 +525,7 @@ export default function CskhAppointmentsScreen() {
       // 1. Phân công Bác sĩ
       await api.patch(`/appointments/${currentApt.id}/assign`, {
         staffId: doctorId,
-      }).catch(() => null);
+      });
 
       // 2. Chuyển trạng thái sang confirmed
       await api.patch(`/appointments/${currentApt.id}/status`, {
@@ -620,14 +693,25 @@ export default function CskhAppointmentsScreen() {
           <ActivityIndicator size="large" color="#EA580C" />
           <Text style={styles.loadingText}>Đang tải danh sách điều phối...</Text>
         </View>
+      ) : appointmentsError ? (
+        <View style={styles.center}>
+          <Ionicons name="alert-circle-outline" size={48} color="#DC2626" />
+          <Text style={styles.emptyTitle}>Không tải được lịch hẹn</Text>
+          <Text style={styles.emptySub}>{appointmentsError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={fetchData}>
+            <Text style={styles.retryButtonText}>Thử lại</Text>
+          </TouchableOpacity>
+        </View>
       ) : filtered.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="checkmark-done-circle-outline" size={56} color="#94A3B8" />
           <Text style={styles.emptyTitle}>Không có lịch hẹn nào</Text>
           <Text style={styles.emptySub}>
-            {filterStatus === 'pending'
-              ? 'Tuyệt vời! Hiện tại đã xử lý hết toàn bộ ca khám chờ duyệt.'
-              : 'Chưa có lịch hẹn ở bộ lọc này.'}
+            {assignedPatientCount === 0
+              ? 'Tài khoản CSKH này chưa được phân công bệnh nhân nào.'
+              : filterStatus === 'pending'
+                ? 'Hiện chưa có lịch hẹn chờ duyệt của bệnh nhân được phân công cho bạn.'
+                : 'Chưa có lịch hẹn ở bộ lọc này của bệnh nhân được phân công cho bạn.'}
           </Text>
         </View>
       ) : (

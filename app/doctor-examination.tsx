@@ -39,6 +39,7 @@ interface Product {
   unit?: string;
   dosage_form?: string;
   usage_instruction?: string;
+  stock_quantity?: number | null;
 }
 
 interface ConfirmedSymptom {
@@ -56,6 +57,46 @@ interface PrescriptionItem {
   usageInstruction?: string;
   durationDays: number;
 }
+
+const fetchAllCatalogPages = async <T,>(
+  endpoint: string,
+  params: Record<string, string | number> = {}
+): Promise<T[]> => {
+  const pageSize = 100;
+  const items: T[] = [];
+  let page = 1;
+
+  while (true) {
+    const res = await api.get(endpoint, {
+      params: { ...params, page, limit: pageSize },
+    });
+    const responseData = res.data?.data;
+    const pageItems: T[] | null = Array.isArray(responseData)
+      ? responseData
+      : Array.isArray(responseData?.data)
+        ? responseData.data
+        : Array.isArray(responseData?.items)
+          ? responseData.items
+          : null;
+
+    if (!pageItems) {
+      throw new Error(`Danh mục ${endpoint} từ máy chủ không đúng định dạng.`);
+    }
+
+    items.push(...pageItems);
+    const meta = res.data?.meta ?? responseData?.meta;
+    const totalPages = meta?.totalPages;
+    const hasNextPage =
+      typeof meta?.hasNextPage === 'boolean'
+        ? meta.hasNextPage
+        : typeof totalPages === 'number'
+          ? page < totalPages
+          : pageItems.length === pageSize;
+
+    if (!hasNextPage) return items;
+    page += 1;
+  }
+};
 
 const DEFAULT_DOCTOR_APPOINTMENTS = [
   {
@@ -186,6 +227,11 @@ export default function DoctorExaminationScreen() {
   const [diseases, setDiseases] = useState<Disease[]>([]);
   const [symptoms, setSymptoms] = useState<Symptom[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [isLoadingClinicalCatalogs, setIsLoadingClinicalCatalogs] = useState(false);
+  const [diseaseCatalogError, setDiseaseCatalogError] = useState<string | null>(null);
+  const [symptomCatalogError, setSymptomCatalogError] = useState<string | null>(null);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+  const [productLoadError, setProductLoadError] = useState<string | null>(null);
 
   // Form State
   const [selectedDisease, setSelectedDisease] = useState<Disease | null>(null);
@@ -255,27 +301,49 @@ export default function DoctorExaminationScreen() {
   };
 
   const loadCatalogs = async () => {
-    try {
-      const [disRes, symRes, prodRes] = await Promise.all([
-        api.get('/diseases').catch(() => null),
-        api.get('/symptoms').catch(() => null),
-        api.get('/products?type=medicine').catch(() => null),
-      ]);
+    setIsLoadingClinicalCatalogs(true);
+    setDiseaseCatalogError(null);
+    setSymptomCatalogError(null);
 
-      if (disRes?.data?.data) {
-        setDiseases(Array.isArray(disRes.data.data) ? disRes.data.data : []);
-      }
-      if (symRes?.data?.data) {
-        setSymptoms(Array.isArray(symRes.data.data) ? symRes.data.data : []);
-      }
-      if (prodRes?.data?.data) {
-        const prods = Array.isArray(prodRes.data.data)
-          ? prodRes.data.data
-          : prodRes.data.data.items || [];
-        setProducts(prods);
-      }
-    } catch {
-      // Ignore
+    const [diseaseResult, symptomResult] = await Promise.allSettled([
+      fetchAllCatalogPages<Disease>('/diseases'),
+      fetchAllCatalogPages<Symptom>('/symptoms'),
+    ]);
+
+    if (diseaseResult.status === 'fulfilled') {
+      setDiseases(diseaseResult.value);
+    } else {
+      console.error('Failed to load diagnosis catalog:', diseaseResult.reason);
+      setDiseases([]);
+      setDiseaseCatalogError('Không thể tải danh mục mã bệnh. Chạm để thử lại.');
+    }
+
+    if (symptomResult.status === 'fulfilled') {
+      setSymptoms(symptomResult.value);
+    } else {
+      console.error('Failed to load symptom catalog:', symptomResult.reason);
+      setSymptoms([]);
+      setSymptomCatalogError('Không thể tải danh mục triệu chứng. Chạm để thử lại.');
+    }
+
+    setIsLoadingClinicalCatalogs(false);
+  };
+
+  const loadMedicineProducts = async () => {
+    setIsLoadingProducts(true);
+    setProductLoadError(null);
+
+    try {
+      const medicineProducts = await fetchAllCatalogPages<Product>('/products', {
+        type: 'medicine',
+      });
+      setProducts(medicineProducts);
+    } catch (error) {
+      console.error('Failed to load medicine products from the database:', error);
+      setProducts([]);
+      setProductLoadError('Không thể tải danh mục thuốc từ máy chủ. Vui lòng thử lại.');
+    } finally {
+      setIsLoadingProducts(false);
     }
   };
 
@@ -960,7 +1028,10 @@ export default function DoctorExaminationScreen() {
 
           <TouchableOpacity
             style={styles.addMedBtn}
-            onPress={() => setShowMedicineModal(true)}
+            onPress={() => {
+              setShowMedicineModal(true);
+              loadMedicineProducts();
+            }}
           >
             <Ionicons name="add-circle" size={18} color="#7C3AED" />
             <Text style={styles.addMedBtnText}>+ Thêm thuốc vào đơn</Text>
@@ -1100,6 +1171,27 @@ export default function DoctorExaminationScreen() {
             <FlatList
               data={filteredDiseases}
               keyExtractor={(item) => String(item.id)}
+              ListEmptyComponent={
+                isLoadingClinicalCatalogs ? (
+                  <View style={styles.productCatalogMessage}>
+                    <ActivityIndicator size="small" color="#0284C7" />
+                    <Text style={styles.loadingText}>Đang tải đầy đủ mã bệnh...</Text>
+                  </View>
+                ) : diseaseCatalogError ? (
+                  <TouchableOpacity style={styles.productCatalogMessage} onPress={loadCatalogs}>
+                    <Text style={styles.productCatalogError}>{diseaseCatalogError}</Text>
+                    <Text style={styles.productCatalogRetry}>Chạm để thử lại</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.productCatalogMessage}>
+                    <Text style={styles.loadingText}>
+                      {diseaseSearch.trim()
+                        ? 'Không tìm thấy mã bệnh phù hợp.'
+                        : 'Cơ sở dữ liệu chưa có mã bệnh.'}
+                    </Text>
+                  </View>
+                )
+              }
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[
@@ -1152,6 +1244,27 @@ export default function DoctorExaminationScreen() {
             <FlatList
               data={filteredSymptoms}
               keyExtractor={(item) => String(item.id)}
+              ListEmptyComponent={
+                isLoadingClinicalCatalogs ? (
+                  <View style={styles.productCatalogMessage}>
+                    <ActivityIndicator size="small" color="#0D9488" />
+                    <Text style={styles.loadingText}>Đang tải đầy đủ triệu chứng...</Text>
+                  </View>
+                ) : symptomCatalogError ? (
+                  <TouchableOpacity style={styles.productCatalogMessage} onPress={loadCatalogs}>
+                    <Text style={styles.productCatalogError}>{symptomCatalogError}</Text>
+                    <Text style={styles.productCatalogRetry}>Chạm để thử lại</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.productCatalogMessage}>
+                    <Text style={styles.loadingText}>
+                      {symptomSearch.trim()
+                        ? 'Không tìm thấy triệu chứng phù hợp.'
+                        : 'Cơ sở dữ liệu chưa có triệu chứng.'}
+                    </Text>
+                  </View>
+                )
+              }
               renderItem={({ item }) => {
                 const isSelected = confirmedSymptoms.some((s) => s.symptomId === item.id);
                 return (
@@ -1202,28 +1315,52 @@ export default function DoctorExaminationScreen() {
               onChangeText={setMedicineSearch}
             />
 
-            <ScrollView style={{ maxHeight: 200 }}>
-              <View style={styles.medSelectContainer}>
-                {filteredProducts.map((p) => {
-                  const isSel = selectedProduct?.id === p.id;
-                  return (
-                    <TouchableOpacity
-                      key={p.id}
-                      style={[styles.medChoiceItem, isSel && styles.medChoiceItemActive]}
-                      onPress={() => setSelectedProduct(p)}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.medChoiceName}>{p.name}</Text>
-                        <Text style={styles.medChoiceUnit}>
-                          Dạng: {p.dosage_form || 'Viên'} | ĐVT: {p.unit || 'Viên'}
-                        </Text>
-                      </View>
-                      {isSel && <Ionicons name="checkmark-circle" size={18} color="#7C3AED" />}
-                    </TouchableOpacity>
-                  );
-                })}
+            {isLoadingProducts ? (
+              <View style={styles.productCatalogMessage}>
+                <ActivityIndicator size="small" color="#7C3AED" />
+                <Text style={styles.loadingText}>Đang tải danh mục thuốc...</Text>
               </View>
-            </ScrollView>
+            ) : productLoadError ? (
+              <TouchableOpacity
+                style={styles.productCatalogMessage}
+                onPress={loadMedicineProducts}
+              >
+                <Text style={styles.productCatalogError}>{productLoadError}</Text>
+                <Text style={styles.productCatalogRetry}>Chạm để thử lại</Text>
+              </TouchableOpacity>
+            ) : filteredProducts.length === 0 ? (
+              <View style={styles.productCatalogMessage}>
+                <Text style={styles.loadingText}>
+                  {medicineSearch.trim()
+                    ? 'Không tìm thấy thuốc phù hợp trong cơ sở dữ liệu.'
+                    : 'Cơ sở dữ liệu chưa có thuốc đang hoạt động.'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 200 }}>
+                <View style={styles.medSelectContainer}>
+                  {filteredProducts.map((p) => {
+                    const isSel = selectedProduct?.id === p.id;
+                    return (
+                      <TouchableOpacity
+                        key={p.id}
+                        style={[styles.medChoiceItem, isSel && styles.medChoiceItemActive]}
+                        onPress={() => setSelectedProduct(p)}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.medChoiceName}>{p.name}</Text>
+                          <Text style={styles.medChoiceUnit}>
+                            Dạng: {p.dosage_form || 'Chưa cập nhật'} | ĐVT: {p.unit || 'Chưa cập nhật'}
+                            {p.stock_quantity != null ? ` | Tồn: ${p.stock_quantity}` : ''}
+                          </Text>
+                        </View>
+                        {isSel && <Ionicons name="checkmark-circle" size={18} color="#7C3AED" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            )}
 
             {/* Chi tiết liều dùng */}
             {selectedProduct && (
@@ -2091,6 +2228,24 @@ const styles = StyleSheet.create({
   medSelectContainer: {
     gap: 6,
     marginVertical: 8,
+  },
+  productCatalogMessage: {
+    minHeight: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  productCatalogError: {
+    color: '#B91C1C',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  productCatalogRetry: {
+    color: '#7C3AED',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 6,
   },
   medChoiceItem: {
     flexDirection: 'row',

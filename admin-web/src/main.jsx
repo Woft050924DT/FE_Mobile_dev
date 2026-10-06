@@ -1019,18 +1019,36 @@ function StaffPage({ staff, search, setSearch, onCreate, onEdit }) {
 }
 
 function CatalogPage({ tab, setTab, items, search, setSearch, onCreate, onEdit, onDelete, onRecommendations }) {
+  const pageSize = 12;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const visibleItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab, search]);
+
   const tabs = [['symptoms', 'Triệu chứng'], ['diseases', 'Bệnh lý'], ['products', 'Thuốc & TPCN']];
   return <div className="panel page-panel">
     <div className="panel-heading"><div><h3>Danh mục y tế</h3><p>Quản lý nội dung y khoa, thuốc và thực phẩm bổ sung.</p></div><button className="button-primary" onClick={onCreate}><Plus size={16} /> Thêm mới</button></div>
     <div className="catalog-toolbar"><div className="segmented">{tabs.map(([key, label]) => <button className={tab === key ? 'active' : ''} key={key} onClick={() => { setTab(key); setSearch(''); }}>{label}</button>)}</div><SearchBox value={search} onChange={setSearch} placeholder="Tìm trong danh mục..." /></div>
     <div className="table-scroll"><table className="data-table catalog-table"><thead><tr><th>TÊN</th><th>{tab === 'symptoms' ? 'PHÂN LOẠI' : tab === 'diseases' ? 'MÃ ICD-10' : 'LOẠI / NHÀ SẢN XUẤT'}</th>{tab === 'products' && <><th>GIÁ</th><th>TỒN KHO</th><th>TRẠNG THÁI</th></>}<th className="actions-th">THAO TÁC</th></tr></thead><tbody>
-      {items.map((item) => <tr key={item.id}><td><div className="catalog-name"><span className={`catalog-icon ${tab}`}><HeartPulse size={16} /></span><div><b>{item.name}</b>{item.description && <small>{item.description}</small>}</div></div></td>
+      {visibleItems.map((item) => <tr key={item.id}><td><div className="catalog-name"><span className={`catalog-icon ${tab}`}><HeartPulse size={16} /></span><div><b>{item.name}</b>{item.description && <small>{item.description}</small>}</div></div></td>
         <td>{tab === 'symptoms' ? item.category || '—' : tab === 'diseases' ? item.icd_code || '—' : <span>{item.type === 'medicine' ? 'Thuốc' : 'TPCN'} <small className="cell-sub">{item.manufacturer || ''}</small></span>}</td>
         {tab === 'products' && <><td>{moneyText(item.price)}</td><td>{item.stock_quantity ?? 0} {item.unit || ''}</td><td><StatusBadge value={item.status} /></td></>}
         <td><div className="row-actions">{tab !== 'products' && <button className="small-action" title="Quản lý gợi ý thuốc" onClick={() => onRecommendations(item)}><Pill size={15} /></button>}<button className="small-action" title="Chỉnh sửa" onClick={() => onEdit(item)}><Settings2 size={15} /></button><button className="small-action danger-action" title="Xóa" onClick={() => onDelete(item)}><Trash2 size={15} /></button></div></td>
       </tr>)}
       {items.length === 0 && <tr><td colSpan={tab === 'products' ? 6 : 3}><Empty icon={HeartPulse} text="Danh mục đang trống." /></td></tr>}
     </tbody></table></div>
+    {items.length > 0 && <div className="catalog-pagination">
+      <span>Hiển thị {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, items.length)} / {items.length} mục</span>
+      <div className="catalog-pagination-controls">
+        <button type="button" className="catalog-page-button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={15} /> Trước</button>
+        <span>Trang {currentPage} / {pageCount}</span>
+        <button type="button" className="catalog-page-button" aria-label="Trang sau" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>Sau <ChevronRight size={15} /></button>
+      </div>
+    </div>}
   </div>;
 }
 

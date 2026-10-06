@@ -251,6 +251,11 @@ button:disabled { cursor: not-allowed; opacity: .62; }
 .segmented button.active { color: #1a776d; background: white; box-shadow: 0 1px 4px #173a4114; }
 .catalog-toolbar .search-box { margin-bottom: 0; }
 .catalog-table { margin-top: 15px; }
+.catalog-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 2px 2px; color: #87969b; font-size: 9px; }
+.catalog-pagination-controls { display: flex; align-items: center; gap: 10px; }
+.catalog-page-button { min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 9px; border: 1px solid #e3ebec; border-radius: 6px; color: #527078; background: #fff; font: inherit; font-weight: 700; }
+.catalog-page-button:hover:not(:disabled) { border-color: #a7d4cc; color: #14796e; background: #f5fbfa; }
+.catalog-page-button:disabled { color: #b2bdc0; background: #f7f9f9; cursor: not-allowed; }
 .catalog-name { display: flex; align-items: center; gap: 8px; max-width: 360px; }
 .catalog-icon { width: 30px; height: 30px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 8px; color: #218075; background: #edf7f4; }
 .catalog-icon.products { color: #c2832b; background: #fff5e4; }

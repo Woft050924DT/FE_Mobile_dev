@@ -218,7 +218,7 @@ export default function DoctorDashboardScreen() {
             </View>
             <Text style={styles.doctorGreeting}>Xin chào,</Text>
             <Text style={styles.doctorNameTitle}>
-              {user?.fullName ? `BS. ${user.fullName}` : 'BS. Nguyễn Văn A'}
+              {user?.fullName ? `BS. ${user.fullName}` : 'Bác sĩ'}
             </Text>
             <Text style={styles.doctorSpecialty}>Bác sĩ chuyên khoa Khám chữa bệnh tại nhà</Text>
           </View>
@@ -340,6 +340,13 @@ export default function DoctorDashboardScreen() {
             <Text style={styles.quickToolBtnText}>Tất cả lịch khám</Text>
           </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          style={styles.dayOffToolBtn}
+          onPress={() => router.push('/doctor-day-off')}
+        >
+          <Ionicons name="calendar-outline" size={18} color="#B45309" />
+          <Text style={styles.dayOffToolBtnText}>Xin nghỉ một ngày (báo trước ít nhất 24 giờ)</Text>
+        </TouchableOpacity>
 
         {/* DANH SÁCH LỊCH KHÁM HÔM NAY */}
         <View style={styles.listHeaderRow}>
@@ -392,6 +399,7 @@ export default function DoctorDashboardScreen() {
                   <View style={styles.timeTag}>
                     <Ionicons name="time" size={13} color="#0F766E" />
                     <Text style={styles.timeTagText}>
+                      {new Date(apt.scheduled_at).toLocaleDateString('vi-VN')} •{' '}
                       {new Date(apt.scheduled_at).toLocaleTimeString('vi-VN', {
                         hour: '2-digit',
                         minute: '2-digit',
@@ -816,6 +824,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#334155',
+  },
+  dayOffToolBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    marginTop: -10,
+    marginBottom: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    backgroundColor: '#FFFBEB',
+  },
+  dayOffToolBtnText: {
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '700',
   },
   listHeaderRow: {
     flexDirection: 'row',

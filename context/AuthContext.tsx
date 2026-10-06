@@ -20,7 +20,7 @@ interface AuthContextType {
   isPatient: boolean;
   sendOtp: (phone: string) => Promise<{ expiresInSeconds: number; mockOtp?: string }>;
   verifyOtp: (phone: string, otp: string) => Promise<void>;
-  loginStaff: (email: string, password: string) => Promise<void>;
+  loginStaff: (email: string, password: string) => Promise<UserProfile>;
   logout: () => Promise<void>;
   switchRole: (newRole: 'patient' | 'doctor' | 'cskh') => Promise<void>;
   updateUser: (updates: Partial<UserProfile>) => Promise<void>;
@@ -43,7 +43,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const savedToken = await storage.getItem('access_token');
       const savedUser = await storage.getItem('user_profile');
       if (savedToken && savedUser) {
-        const parsed = JSON.parse(savedUser);
+        let parsed: UserProfile = JSON.parse(savedUser);
+        if (parsed.role !== 'patient' && parsed.id) {
+          try {
+            const res = await api.get(`/users/${parsed.id}`);
+            const staffUser = res.data?.data;
+            if (staffUser) {
+              const roleCode =
+                typeof staffUser.role === 'string'
+                  ? staffUser.role
+                  : staffUser.role?.code || staffUser.roles?.code;
+              parsed = {
+                ...parsed,
+                id: staffUser.id || parsed.id,
+                fullName: staffUser.fullName || staffUser.full_name || parsed.fullName,
+                email: staffUser.email || parsed.email,
+                phone: staffUser.phone || parsed.phone,
+                role: roleCode?.toLowerCase() || parsed.role,
+              };
+              await storage.setItem('user_profile', JSON.stringify(parsed));
+            }
+          } catch (e) {
+            console.error('Failed to refresh saved staff profile:', e);
+          }
+        }
         setToken(savedToken);
         setUser(parsed);
         setRole(parsed.role);
@@ -81,16 +104,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole('patient');
   };
 
-  const loginStaff = async (email: string, password: string) => {
+  const loginStaff = async (email: string, password: string): Promise<UserProfile> => {
     const res = await api.post('/auth/login', { email, password });
     const { user: staffUser, accessToken, refreshToken } = res.data?.data;
+    const roleCode =
+      typeof staffUser.role === 'string'
+        ? staffUser.role
+        : staffUser.role?.code || staffUser.roles?.code;
 
     const profile: UserProfile = {
       id: staffUser.id,
-      fullName: staffUser.full_name,
+      fullName: staffUser.fullName || staffUser.full_name,
       email: staffUser.email,
       phone: staffUser.phone,
-      role: staffUser.role?.code?.toLowerCase() || 'doctor',
+      role: roleCode?.toLowerCase() || 'doctor',
     };
 
     await storage.setItem('access_token', accessToken);
@@ -100,6 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(accessToken);
     setUser(profile);
     setRole(profile.role);
+    return profile;
   };
 
   const switchRole = async (newRole: 'patient' | 'doctor' | 'cskh') => {

@@ -99,6 +99,7 @@ export default function BookAppointmentScreen() {
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [slotLoadError, setSlotLoadError] = useState<string | null>(null);
 
   // Hình thức khám
   const [appointmentType, setAppointmentType] = useState<'first_visit' | 'follow_up'>('first_visit');
@@ -208,13 +209,23 @@ export default function BookAppointmentScreen() {
   };
 
   const calculateAvailableSlots = async () => {
-    if (!selectedDoctorId) return;
+    if (!selectedDoctorId) {
+      setTimeSlots([]);
+      setSelectedSlotId(null);
+      return;
+    }
     try {
       setIsSlotLoading(true);
+      setSlotLoadError(null);
       const dateStr = formatDateToYMD(selectedDate);
 
-      const res = await api.get(`/appointments/doctor-availability?doctorId=${selectedDoctorId}&date=${dateStr}`);
-      const bookedTimes: string[] = res.data?.data?.bookedTimes || [];
+      const res = await api.get('/appointments/doctor-availability', {
+        params: { doctorId: selectedDoctorId, date: dateStr },
+      });
+      const bookedTimes = res.data?.data?.bookedTimes;
+      if (!Array.isArray(bookedTimes) || bookedTimes.some((time) => typeof time !== 'string')) {
+        throw new Error('Phản hồi kiểm tra lịch trống không hợp lệ.');
+      }
 
       const computed = BASE_SLOTS.map((slot) => {
         const slotStart = new Date(selectedDate);
@@ -222,7 +233,7 @@ export default function BookAppointmentScreen() {
 
         const isBooked = bookedTimes.some((bookedIso: string) => {
           const bDate = new Date(bookedIso);
-          return Math.abs(bDate.getTime() - slotStart.getTime()) < 30 * 60 * 1000;
+          return Math.abs(bDate.getTime() - slotStart.getTime()) < 45 * 60 * 1000;
         });
 
         return {
@@ -236,11 +247,11 @@ export default function BookAppointmentScreen() {
         (slot) => !slot.isBooked && !isSlotInPast(slot)
       );
       setSelectedSlotId(firstAvailable ? firstAvailable.id : null);
-    } catch {
-      const fallbackSlots = BASE_SLOTS.map((slot) => ({ ...slot, isBooked: false }));
-      setTimeSlots(fallbackSlots);
-      const firstAvailable = fallbackSlots.find((slot) => !isSlotInPast(slot));
-      setSelectedSlotId(firstAvailable ? firstAvailable.id : null);
+    } catch (error) {
+      console.error('Failed to check doctor and patient appointment availability:', error);
+      setTimeSlots([]);
+      setSelectedSlotId(null);
+      setSlotLoadError('Không thể kiểm tra lịch trống. Vui lòng thử tải lại trước khi đặt lịch.');
     } finally {
       setIsSlotLoading(false);
     }
@@ -418,7 +429,11 @@ export default function BookAppointmentScreen() {
         [
           {
             text: 'Xem danh sách lịch hẹn',
-            onPress: () => router.replace('/appointments'),
+            onPress: () =>
+              router.replace({
+                pathname: '/appointments',
+                params: { showAll: '1' },
+              }),
           },
         ]
       );
@@ -673,6 +688,16 @@ export default function BookAppointmentScreen() {
           <Text style={styles.subHint}>
             * Thời lượng dự kiến: 45 phút/lượt khám trực tiếp tại phòng bác sĩ
           </Text>
+          {slotLoadError && (
+            <TouchableOpacity
+              style={styles.slotError}
+              onPress={calculateAvailableSlots}
+              disabled={isSlotLoading}
+            >
+              <Text style={styles.slotErrorText}>{slotLoadError}</Text>
+              <Text style={styles.slotRetryText}>Chạm để thử lại</Text>
+            </TouchableOpacity>
+          )}
 
           <View style={styles.slotsGrid}>
             {timeSlots.map((slot) => {
@@ -1225,6 +1250,24 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginBottom: 10,
     marginTop: -6,
+  },
+  slotError: {
+    marginBottom: 10,
+    padding: 12,
+    alignItems: 'center',
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+  },
+  slotErrorText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  slotRetryText: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
   },
   slotHeaderRow: {
     flexDirection: 'row',

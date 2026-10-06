@@ -12,7 +12,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { AppointmentStatusBadge } from '../../components/AppointmentStatusBadge';
 import { MedicalColors } from '../../constants/Colors';
@@ -63,6 +63,7 @@ interface PatientChoiceRequest {
 
 export default function AppointmentsScreen() {
   const router = useRouter();
+  const { showAll } = useLocalSearchParams<{ showAll?: string }>();
   const { user, token, isDoctor, isCskh } = useAuth();
   const isPatientUser = user?.role === 'patient';
 
@@ -84,7 +85,7 @@ export default function AppointmentsScreen() {
   const [isLoadingPatientChoice, setIsLoadingPatientChoice] = useState(false);
   const [submittedDoctorChangeIds, setSubmittedDoctorChangeIds] = useState<string[]>([]);
 
-  const fetchAppointments = async () => {
+  const fetchAppointments = useCallback(async () => {
     if (!token) {
       setIsLoading(false);
       return;
@@ -92,20 +93,101 @@ export default function AppointmentsScreen() {
 
     try {
       setIsLoading(true);
-      const res = await api.get('/appointments');
-      const items =
-        res.data?.data?.data ||
-        res.data?.data?.items ||
-        (Array.isArray(res.data?.data) ? res.data?.data : []);
-      setAppointments(Array.isArray(items) ? items : []);
-    } catch {
+      const pageSize = 100;
+      const allItems: AppointmentItem[] = [];
+      const seenIds = new Set<string>();
+      let patientId = user?.id;
+      if (isPatientUser) {
+        try {
+          const profileRes = await api.get('/patients/me');
+          patientId = profileRes.data?.data?.id || patientId;
+        } catch {
+          // Use the authenticated patient ID when the profile endpoint is unavailable.
+        }
+      }
+      let page = 1;
+
+      while (true) {
+        const res = await api.get('/appointments', {
+          params: {
+            page,
+            limit: pageSize,
+            ...(isPatientUser && patientId ? { patientId } : {}),
+          },
+        });
+        const payload = res.data?.data ?? res.data;
+        const candidates = [
+          payload,
+          payload?.data,
+          payload?.items,
+          payload?.results,
+          payload?.data?.items,
+          payload?.data?.results,
+        ];
+        const items = candidates.find(Array.isArray);
+        if (!items) {
+          throw new Error('API trả về danh sách lịch hẹn không đúng định dạng.');
+        }
+
+        let addedCount = 0;
+        for (const item of items as AppointmentItem[]) {
+          if (item.id && seenIds.has(item.id)) continue;
+          if (item.id) seenIds.add(item.id);
+          allItems.push({
+            ...item,
+            status: String(item.status || '').toLowerCase(),
+          });
+          addedCount += 1;
+        }
+
+        const pagination =
+          payload?.meta ||
+          payload?.pagination ||
+          payload?.data?.meta ||
+          payload?.data?.pagination ||
+          res.data?.meta ||
+          res.data?.pagination;
+        const effectivePageSize =
+          Number(pagination?.limit ?? pagination?.pageSize ?? pagination?.perPage) ||
+          pageSize;
+        const reportedTotalPages = Number(
+          pagination?.totalPages ??
+            pagination?.total_pages ??
+            pagination?.lastPage ??
+            pagination?.pages ??
+            pagination?.pageCount
+        );
+        const totalCount = Number(
+          pagination?.total ??
+            pagination?.totalItems ??
+            pagination?.totalCount ??
+            pagination?.count
+        );
+        const totalPages =
+          Number.isFinite(reportedTotalPages) && reportedTotalPages > 0
+            ? reportedTotalPages
+            : Number.isFinite(totalCount) && totalCount >= 0
+              ? Math.ceil(totalCount / effectivePageSize)
+              : undefined;
+        if (typeof totalPages === 'number' && Number.isFinite(totalPages) && totalPages > 0) {
+          if (page >= totalPages) break;
+        }
+        if (items.length === 0 || addedCount === 0) break;
+        page += 1;
+      }
+
+      setAppointments(allItems);
+    } catch (err: any) {
       setAppointments([]);
-      Alert.alert('Không tải được lịch hẹn', 'Vui lòng kiểm tra kết nối và thử tải lại.');
+      Alert.alert(
+        'Không tải được lịch hẹn',
+        err.response?.data?.message || err.message || 'Vui lòng kiểm tra kết nối và thử tải lại.'
+      );
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [token]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -150,9 +232,13 @@ export default function AppointmentsScreen() {
     return () => clearInterval(refreshInterval);
   }, [token, isPatientUser, fetchPatientChoiceRequests]);
 
-  useEffect(() => {
-    fetchAppointments();
-  }, [token]);
+  useFocusEffect(
+    useCallback(() => {
+      if (showAll === '1') setFilterStatus('all');
+      void fetchAppointments();
+      if (isPatientUser) void fetchPatientChoiceRequests(true);
+    }, [fetchAppointments, fetchPatientChoiceRequests, isPatientUser, showAll])
+  );
 
   const openChangeRequest = (appointment: AppointmentItem, type: 'reschedule' | 'cancel') => {
     setRequestAppointment(appointment);
@@ -271,11 +357,11 @@ export default function AppointmentsScreen() {
         hour < 7 ||
         hour > 20 ||
         minute % 30 !== 0 ||
-        (hour === 20 && minute > 30)
+        (hour === 20 && minute > 15)
       ) {
         Alert.alert(
           'Thời gian chưa hợp lệ',
-          'Chọn giờ tương lai trong khung 07:00–20:30, cách nhau 30 phút.'
+          'Chọn giờ tương lai trong khung 07:00–20:15, mỗi ca khám kéo dài 45 phút.'
         );
         return;
       }
@@ -584,7 +670,7 @@ export default function AppointmentsScreen() {
               item.patients?.phone || 'Chưa có SĐT';
             const doctorName =
               item.users_appointments_assigned_staff_idTousers?.full_name ||
-              'BS. Hoàng Minh Tâm';
+              'Chưa phân công bác sĩ';
 
             return (
               <View style={styles.card}>
@@ -992,7 +1078,7 @@ export default function AppointmentsScreen() {
                   placeholderTextColor="#94A3B8"
                   keyboardType="numbers-and-punctuation"
                 />
-                <Text style={styles.inputLabel}>Giờ mong muốn (07:00–20:30, mỗi 30 phút)</Text>
+                <Text style={styles.inputLabel}>Giờ mong muốn (07:00–20:15, ca khám 45 phút)</Text>
                 <TextInput
                   style={styles.requestInput}
                   value={patientChoiceTime}

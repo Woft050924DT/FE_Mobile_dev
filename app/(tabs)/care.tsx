@@ -45,33 +45,25 @@ export default function CareScreen() {
       // Lấy thông tin CSKH phụ trách qua hồ sơ bệnh nhân
       if (user?.id) {
         try {
-          const patientRes = await api.get(`/patients/${user.id}`);
-          const assignedStaff = patientRes.data?.data?.users_patients_assigned_cskh_idTousers;
+          let patientData: any;
+          try {
+            const patientRes = await api.get('/patients/me');
+            patientData = patientRes.data?.data;
+          } catch {
+            const patientRes = await api.get(`/patients/${user.id}`);
+            patientData = patientRes.data?.data;
+          }
+          const assignedStaff = patientData?.users_patients_assigned_cskh_idTousers;
           if (assignedStaff) {
             setCskhStaff({
               cskh_staff: assignedStaff,
-              assigned_at: patientRes.data?.data?.created_at,
+              assigned_at: patientData.created_at,
             });
           } else {
-            setCskhStaff({
-              cskh_staff: {
-                full_name: 'CSKH Trần Thị B (Mặc định)',
-                phone: '0903456789',
-                email: 'cskh@hospital.local',
-              },
-              assigned_at: new Date().toISOString(),
-            });
+            setCskhStaff(null);
           }
         } catch {
-          // Fallback khi chưa gán CSKH
-          setCskhStaff({
-            cskh_staff: {
-              full_name: 'CSKH Trần Thị B',
-              phone: '0903456789',
-              email: 'cskh@hospital.local',
-            },
-            assigned_at: new Date().toISOString(),
-          });
+          setCskhStaff(null);
         }
       }
     } catch {
@@ -121,12 +113,20 @@ export default function CareScreen() {
   };
 
   const handleCallCSKH = () => {
-    const phone = cskhStaff?.cskh_staff?.phone || '0903456789';
+    const phone = cskhStaff?.cskh_staff?.phone;
+    if (!phone) {
+      Alert.alert('Chưa có CSKH phụ trách', 'Hiện chưa có nhân viên CSKH được phân công cho hồ sơ này.');
+      return;
+    }
     Linking.openURL(`tel:${phone}`);
   };
 
   const handleOpenZalo = () => {
-    const phone = cskhStaff?.cskh_staff?.phone || '0903456789';
+    const phone = cskhStaff?.cskh_staff?.phone;
+    if (!phone) {
+      Alert.alert('Chưa có CSKH phụ trách', 'Hiện chưa có nhân viên CSKH được phân công cho hồ sơ này.');
+      return;
+    }
     Linking.openURL(`https://zalo.me/${phone}`).catch(() => {
       Alert.alert('Zalo', 'Không thể mở liên kết Zalo trên thiết bị này.');
     });
@@ -231,19 +231,29 @@ export default function CareScreen() {
             </View>
             <Text style={styles.cskhRole}>CHUYÊN VIÊN CSKH PHỤ TRÁCH CỦA BẠN</Text>
             <Text style={styles.cskhName}>
-              {cskhStaff?.cskh_staff?.full_name || 'CSKH Trần Thị B'}
+              {cskhStaff?.cskh_staff?.full_name || 'Chưa có CSKH được phân công'}
             </Text>
             <Text style={styles.cskhDesc}>
-              Tuân thủ nguyên tắc chăm sóc 1 cửa (Single Active CSKH). Nhân viên phụ trách sẽ hỗ trợ bạn tái khám, hướng dẫn uống thuốc và giải đáp mọi thắc mắc.
+              {cskhStaff?.cskh_staff
+                ? 'Nhân viên phụ trách sẽ hỗ trợ bạn tái khám, hướng dẫn uống thuốc và giải đáp mọi thắc mắc.'
+                : 'Bộ phận CSKH chưa được phân công cho hồ sơ này.'}
             </Text>
 
             <View style={styles.cskhBtnGroup}>
-              <TouchableOpacity style={styles.callBtn} onPress={handleCallCSKH}>
+              <TouchableOpacity
+                style={[styles.callBtn, !cskhStaff?.cskh_staff?.phone && styles.disabledContactBtn]}
+                onPress={handleCallCSKH}
+                disabled={!cskhStaff?.cskh_staff?.phone}
+              >
                 <Ionicons name="call" size={18} color="#FFFFFF" />
                 <Text style={styles.callBtnText}>Gọi điện trực tiếp</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.zaloBtn} onPress={handleOpenZalo}>
+              <TouchableOpacity
+                style={[styles.zaloBtn, !cskhStaff?.cskh_staff?.phone && styles.disabledContactBtn]}
+                onPress={handleOpenZalo}
+                disabled={!cskhStaff?.cskh_staff?.phone}
+              >
                 <Ionicons name="chatbubble-ellipses" size={18} color="#0284C7" />
                 <Text style={styles.zaloBtnText}>Nhắn tin Zalo</Text>
               </TouchableOpacity>
@@ -452,6 +462,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
+  },
+  disabledContactBtn: {
+    opacity: 0.5,
   },
   callBtnText: {
     color: '#FFFFFF',

@@ -85,14 +85,14 @@ export default function LoginScreen() {
     }
     try {
       setIsLoading(true);
-      await loginStaff(email, password);
+      const staff = await loginStaff(email, password);
       Alert.alert('Thành công', 'Đăng nhập nhân viên thành công!', [
         {
           text: 'OK',
           onPress: () => {
-            if (email.includes('doctor')) {
+            if (staff.role === 'doctor') {
               router.replace('/doctor-dashboard');
-            } else if (email.includes('cskh')) {
+            } else if (staff.role === 'cskh') {
               router.replace('/cskh-appointments');
             } else {
               router.back();

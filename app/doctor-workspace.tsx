@@ -220,7 +220,7 @@ export default function DoctorWorkspaceScreen() {
           <Text style={styles.badgePillText}>Bảng Điều Khiển Ca Trực Bác Sĩ</Text>
         </View>
         <Text style={styles.doctorName}>
-          {user?.fullName ? `BS. ${user.fullName}` : 'BS. Nguyễn Văn A'}
+          {user?.fullName ? `BS. ${user.fullName}` : 'Bác sĩ'}
         </Text>
         <Text style={styles.doctorSub}>
           Bác sĩ chuyên khoa khám chữa bệnh tại phòng khám & Kê đơn EMR.
@@ -242,6 +242,16 @@ export default function DoctorWorkspaceScreen() {
           </View>
         </View>
       </View>
+
+      <TouchableOpacity
+        style={styles.dayOffButton}
+        onPress={() => router.push('/doctor-day-off')}
+      >
+        <Ionicons name="calendar-outline" size={17} color="#B45309" />
+        <Text style={styles.dayOffButtonText}>
+          Xin nghỉ một ngày (báo trước ít nhất 24 giờ)
+        </Text>
+      </TouchableOpacity>
 
       {/* Filter Tabs */}
       <View style={styles.filterBar}>
@@ -633,6 +643,24 @@ const styles = StyleSheet.create({
     gap: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
+  },
+  dayOffButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  dayOffButtonText: {
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '700',
   },
   filterTab: {
     paddingHorizontal: 14,
